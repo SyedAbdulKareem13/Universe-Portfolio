@@ -14,8 +14,9 @@ class Portfolio {
     // static design props (were Claude-Design editor controls)
     this.props = { accentMode: 'Duotone', orbDistortion: 0.18, grain: true };
     this.menuOpen = false;
-    this.worldPhase = 'idle'; // idle | swallowing | ended | reviving
+    this.worldPhase = 'idle'; // idle | swallowing | ended | reviving | apocalypse | impacted | rebuilding
     this._bhLens = { strength: 0 }; // gravitational-lensing strength for the 3D black hole
+    this._apocShake = { amp: 0 };   // bounded camera-shake amplitude for the Apocalypse set-piece
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -68,9 +69,19 @@ class Portfolio {
 
     const revive = document.getElementById('revive-btn');
     if (revive) revive.addEventListener('click', () => this.revive());
-    // never trap the user: Esc (and browser back) revive from THE END
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && this.worldPhase === 'ended') this.revive(); });
-    window.addEventListener('popstate', () => { if (this.worldPhase === 'ended' || this.worldPhase === 'swallowing') this.revive(); });
+    const rebuild = document.getElementById('rebuild-btn');
+    if (rebuild) rebuild.addEventListener('click', () => this.rebuild());
+    // never trap the user: Esc + browser-back recover from any set-piece, including its forward window
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (this.worldPhase === 'ended' || this.worldPhase === 'swallowing') this.revive();
+      else if (this.worldPhase === 'impacted' || this.worldPhase === 'apocalypse') this.rebuild();
+    });
+    window.addEventListener('popstate', () => {
+      if (this._ignoreNextPop) { this._ignoreNextPop = false; return; } // our own history.back() reconciliation
+      if (this.worldPhase === 'ended' || this.worldPhase === 'swallowing') { this._recoverViaPop = true; this.revive(); }
+      else if (this.worldPhase === 'impacted' || this.worldPhase === 'apocalypse') { this._recoverViaPop = true; this.rebuild(); }
+    });
 
     this.initContactForm();
   }
@@ -310,6 +321,7 @@ class Portfolio {
     if (law === 'blackhole') return this.handleBlackHole();
     if (law === 'time') return this.cycleTime();
     if (law === 'bigbang') return this.bigBang();
+    if (law === 'apocalypse') return this.handleApocalypse();
     if (law === 'reset') return this.resetUniverse();
   }
 
@@ -608,7 +620,7 @@ class Portfolio {
   restyleButtons() {
     const L = this.laws; if (!L) return;
     document.querySelectorAll('[data-law-btn]').forEach((btn) => {
-      const law = btn.getAttribute('data-law-btn'); if (law === 'reset') return; let active = false;
+      const law = btn.getAttribute('data-law-btn'); if (law === 'reset' || law === 'apocalypse') return; let active = false;
       if (['earth', 'zerog', 'mars', 'moon', 'jupiter'].indexOf(law) >= 0) active = (L.preset === law && !L.blackHole);
       else if (law === 'slowmo') active = L.slowmo;
       else if (law === 'blackhole') active = L.blackHole;
@@ -632,7 +644,7 @@ class Portfolio {
     this.worldPhase = 'swallowing';
     // snapshot state we must restore on revive
     this._savedScroll = window.scrollY || window.pageYOffset || 0;
-    try { history.pushState({ universe: 'swallow' }, ''); } catch (e) {}
+    try { history.pushState({ universe: 'swallow' }, ''); this._pushedHistory = true; } catch (e) {}
     this.lockLawBar(true);
     this.toast('SINGULARITY FORMING… run.');
 
@@ -761,12 +773,24 @@ class Portfolio {
     if (this.lenis) { try { this.lenis.scrollTo(y, { immediate: true }); } catch (e) { window.scrollTo(0, y); } }
     else window.scrollTo(0, y);
     this.worldPhase = 'idle';
+    this._reconcileHistory();
+  }
+
+  // if a set-piece pushed a history entry and recovery did NOT come from Back,
+  // pop our own entry so the browser Back button isn't silently consumed later
+  _reconcileHistory() {
+    if (this._pushedHistory) {
+      this._pushedHistory = false;
+      if (!this._recoverViaPop) { try { this._ignoreNextPop = true; history.back(); } catch (e) { this._ignoreNextPop = false; } }
+    }
+    this._recoverViaPop = false;
   }
 
   lockLawBar(locked) {
     const bar = document.getElementById('law-bar'); if (!bar) return;
+    // disable EVERY law button during a set-piece (incl. reset) so nothing looks clickable-but-dead;
+    // recovery is via the REVIVE/REBUILD overlay button, Esc or browser-back.
     bar.querySelectorAll('[data-law-btn]').forEach((b) => {
-      if (b.getAttribute('data-law-btn') === 'reset') return;
       b.style.pointerEvents = locked ? 'none' : '';
       b.style.opacity = locked ? '0.4' : '';
     });
@@ -1105,6 +1129,7 @@ class Portfolio {
     // hero-centred objects to fade out when the black hole takes the stage
     this._heroAmbient = [this.shell, this.glowV, this.glowC].concat(this.rings || []).concat(this.orbiters || []).filter(Boolean);
     if (this.tier !== 'low') this.buildSectionObjects();
+    this.buildSpaceRoamers();
     this.buildRocket();
     this._sectionEls = ['home', 'about', 'skills', 'experience', 'projects', 'contact'].map((id) => document.getElementById(id)).filter(Boolean);
     this._clock = new THREE.Clock();
@@ -1625,6 +1650,259 @@ class Portfolio {
     R.state = 'landing';
   }
 
+  /* =====================================================================
+     SPACE ROAMERS — a living space scene: slowly-rotating stations,
+     roaming rockets on curved paths, and comets with GPU-particle tails.
+     Background roamers move on cheap animated paths (not physics).
+     ===================================================================== */
+  makeRoamerRocket() {
+    const THREE = window.THREE; const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.2, 6, 14), new THREE.MeshPhysicalMaterial({ color: 0xdfe4ee, metalness: 1, roughness: 0.3, envMapIntensity: 1.5 })); g.add(body);
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.1, 16), new THREE.MeshPhysicalMaterial({ color: 0x8B5CF6, metalness: 1, roughness: 0.35, emissive: 0x2a1046, emissiveIntensity: 0.5 })); nose.position.y = 0.2; g.add(nose);
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.16, 12), new THREE.MeshBasicMaterial({ color: 0x7fe0ff, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false })); flame.position.y = -0.2; flame.rotation.z = Math.PI; g.add(flame);
+    g.userData.flame = flame; return g;
+  }
+
+  buildStation() {
+    const THREE = window.THREE; const g = new THREE.Group();
+    const metal = new THREE.MeshPhysicalMaterial({ color: 0x9aa3b5, metalness: 1, roughness: 0.45, envMapIntensity: 1.3 });
+    const truss = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.4, 14), metal); truss.rotation.z = Math.PI / 2; g.add(truss);
+    [-0.42, 0.42].forEach((x) => { const r = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.04, 12, 44), metal); r.position.x = x; r.rotation.y = Math.PI / 2; g.add(r); });
+    const wings = new THREE.Group();
+    [-1, 1].forEach((side) => {
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6), metal); arm.position.x = side * 0.72; arm.rotation.z = Math.PI / 2; wings.add(arm);
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.012, 0.72), new THREE.MeshPhysicalMaterial({ color: 0x16213a, metalness: 0.4, roughness: 0.3, emissive: 0x122a6e, emissiveIntensity: 0.45, envMapIntensity: 1.2 })); panel.position.x = side * 1.05; wings.add(panel);
+    });
+    g.add(wings); g.userData.wings = wings;
+    const lights = []; [[0.62, 0.18, 0, 0xff5555], [-0.62, -0.18, 0, 0x55ff88], [0, 0.22, 0.22, 0x55aaff]].forEach(([x, y, z, c]) => { const l = new THREE.Mesh(new THREE.SphereGeometry(0.03, 10, 10), new THREE.MeshBasicMaterial({ color: c })); l.position.set(x, y, z); g.add(l); lights.push(l); });
+    g.userData.lights = lights; return g;
+  }
+
+  buildComet() {
+    const THREE = window.THREE; const g = new THREE.Group();
+    g.add(new THREE.Mesh(new THREE.IcosahedronGeometry(0.08, 0), new THREE.MeshStandardMaterial({ color: 0xbfeaff, metalness: 0.2, roughness: 0.6, emissive: 0x2a5a7a, emissiveIntensity: 0.7 })));
+    const N = 120, pos = new Float32Array(N * 3), al = new Float32Array(N);
+    for (let i = 0; i < N; i++) { const f = i / N; pos[i * 3] = 0; pos[i * 3 + 1] = f * 1.7; pos[i * 3 + 2] = 0; al[i] = 1 - f; } // tail along +Y local
+    const tg = new THREE.BufferGeometry(); tg.setAttribute('position', new THREE.BufferAttribute(pos, 3)); tg.setAttribute('aA', new THREE.BufferAttribute(al, 1));
+    const tm = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uColor: { value: new THREE.Color(0x9fe6ff) } },
+      vertexShader: 'attribute float aA; varying float vA; void main(){ vA=aA; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_PointSize=(7.0*aA+1.0)*(200.0/-mv.z)*0.05; gl_Position=projectionMatrix*mv; }',
+      fragmentShader: 'varying float vA; uniform vec3 uColor; void main(){ vec2 d=gl_PointCoord-0.5; if(length(d)>0.5) discard; gl_FragColor=vec4(uColor, vA*0.5); }' });
+    g.add(new THREE.Points(tg, tm)); return g;
+  }
+
+  buildSpaceRoamers() {
+    if (!this.three) return;
+    const THREE = window.THREE; const s = this.three.scene; const tier = this.tier;
+    const nRockets = tier === 'ultra' ? 6 : tier === 'low' ? 2 : 4;
+    const nComets = tier === 'ultra' ? 3 : tier === 'low' ? 1 : 2;
+    const nStations = tier === 'low' ? 0 : 1;
+    this.roamers = { stations: [], rockets: [], comets: [], sun: new THREE.Vector3(7, 5, 4) };
+    for (let i = 0; i < nStations; i++) { const st = this.buildStation(); st.position.set(-3.4, -12, -4.5); st.scale.setScalar(1.15); s.add(st); this.roamers.stations.push({ grp: st, spin: 0.04 }); }
+    for (let i = 0; i < nRockets; i++) {
+      const rk = this.makeRoamerRocket(); rk.scale.setScalar(0.7); s.add(rk);
+      const sd = (n) => { const x = Math.sin((i * 12.9 + n * 78.2)) * 43758.5; return x - Math.floor(x); }; // deterministic per-roamer
+      const path = { cx: (i % 2 ? 2.6 : -2.6), cy: -(i * 5) - 2, cz: -2.5 - (i % 3), a: 1.6 + sd(1) * 1.2, b: 1.0 + sd(2) * 0.8, w: 0.16 + sd(3) * 0.12, ph: sd(4) * 6.28 };
+      this.roamers.rockets.push({ grp: rk, path, prev: new THREE.Vector3(), q: new THREE.Quaternion() });
+    }
+    for (let i = 0; i < nComets; i++) { const cm = this.buildComet(); s.add(cm); this.roamers.comets.push({ grp: cm, y: -(i * 9) - 4, z: -6 - i * 2, speed: 1.2 + i * 0.4, ph: i * 2.3, span: 13, q: new THREE.Quaternion() }); }
+  }
+
+  animateRoamers(t) {
+    const R = this.roamers; if (!R) return; const THREE = window.THREE; const UP = this._UP || (this._UP = new THREE.Vector3(0, 1, 0));
+    R.stations.forEach((o) => { o.grp.rotation.z = t * o.spin; if (o.grp.userData.wings) o.grp.userData.wings.rotation.x = t * 0.3; (o.grp.userData.lights || []).forEach((l, k) => { l.visible = Math.sin(t * 3 + k * 2.1) > -0.3; }); });
+    R.rockets.forEach((o) => {
+      const p = o.path; o.prev.copy(o.grp.position);
+      o.grp.position.set(p.cx + Math.cos(t * p.w + p.ph) * p.a, p.cy + Math.sin(t * p.w * 0.8 + p.ph) * p.b, p.cz + Math.sin(t * p.w + p.ph * 1.3) * 0.8);
+      const v = this._rkTmp2 || (this._rkTmp2 = new THREE.Vector3()); v.copy(o.grp.position).sub(o.prev);
+      if (v.lengthSq() > 1e-6) { o.q.setFromUnitVectors(UP, v.normalize()); o.grp.quaternion.slerp(o.q, 0.2); }
+      if (o.grp.userData.flame) o.grp.userData.flame.scale.y = 0.8 + Math.sin(t * 30 + p.ph) * 0.2;
+    });
+    R.comets.forEach((o) => {
+      const span = o.span; let x = ((t * o.speed + o.ph) % (span * 2)) - span;
+      o.grp.position.set(-x, o.y + x * 0.15, o.z);
+      const away = (this._cmTmp || (this._cmTmp = new THREE.Vector3())).copy(o.grp.position).sub(R.sun).normalize();
+      o.q.setFromUnitVectors(UP, away); o.grp.quaternion.copy(o.q);
+      o.grp.visible = (1 - Math.min(1, Math.abs(x) / span)) > 0.06;
+    });
+  }
+
+  /* =====================================================================
+     APOCALYPSE — reversible asteroid-bombardment set-piece.
+     Warning -> staggered impacts (bounded shake, soft spaced flashes,
+     shockwaves) -> name letters scatter into debris + cracks spread ->
+     IMPACT card -> REBUILD plays the one master timeline in reverse.
+     Safety: no strobe (impacts >=0.46s apart, luminance-limited), reduced
+     motion = calm crossfade, mobile/low = fewer asteroids.
+     ===================================================================== */
+  buildCracksDataURI() {
+    const W = 1200, H = 800, fx = 600, fy = 320; let paths = '';
+    const sd = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
+    for (let i = 0; i < 16; i++) {
+      let x = fx, y = fy, a = (i / 16) * Math.PI * 2 + sd(i) * 0.3, d = 'M' + x.toFixed(0) + ',' + y.toFixed(0);
+      const segs = 5 + Math.floor(sd(i + 9) * 4);
+      for (let j = 0; j < segs; j++) { const len = 38 + sd(i * 7 + j) * 95; a += (sd(i * 3 + j) - 0.5) * 0.7; x += Math.cos(a) * len; y += Math.sin(a) * len; d += ' L' + x.toFixed(0) + ',' + y.toFixed(0); }
+      paths += '<path d="' + d + '" stroke="rgba(232,236,246,0.55)" stroke-width="' + (2.2 - (i % 3) * 0.5).toFixed(1) + '" fill="none"/>';
+    }
+    return 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">' + paths + '</svg>');
+  }
+
+  // foreground DOM asteroids: they fly OVER the page content and visibly slam into it
+  spawnApocalypseAsteroids(count) {
+    const layer = document.getElementById('apoc-front'); if (!layer) return;
+    layer.innerHTML = ''; this._asteroids = []; this._apocDecals = [];
+    const g = this.gsap; const W = window.innerWidth, H = window.innerHeight;
+    const pts = [[0.5, 0.36], [0.28, 0.5], [0.72, 0.44], [0.4, 0.6], [0.6, 0.54], [0.5, 0.46]];
+    for (let i = 0; i < count; i++) {
+      const tx = pts[i % pts.length][0] * W, ty = pts[i % pts.length][1] * H;
+      const side = i % 2 ? 1 : -1;
+      const fx = tx + side * (W * 0.28), fy = -130 - i * 40; // just above the top edge so the descent is ON-screen
+      const ang = Math.atan2(ty - fy, tx - fx) * 180 / Math.PI;
+      const size = 70 + (i % 3) * 22; // bigger, clearly visible
+      const el = document.createElement('div');
+      el.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform;pointer-events:none;';
+      el.innerHTML =
+        '<div style="position:absolute;left:0;top:0;width:340px;height:' + Math.max(16, size * 0.55) + 'px;transform:translate(-100%,-50%);background:linear-gradient(to left, rgba(255,236,170,0.98), rgba(255,140,50,0.6) 38%, transparent);filter:blur(5px);border-radius:50%;"></div>'
+        + '<div data-rock style="position:absolute;left:0;top:0;width:' + size + 'px;height:' + size + 'px;transform:translate(-50%,-50%);border-radius:46% 54% 52% 48%;background:radial-gradient(circle at 34% 30%, #8a7565, #45362c 55%, #1c150f);box-shadow:0 0 36px 11px rgba(255,120,40,0.7), inset -6px -6px 12px rgba(0,0,0,0.7);"></div>';
+      layer.appendChild(el);
+      const rock = el.querySelector('[data-rock]');
+      if (g) { g.set(el, { x: fx, y: fy, rotation: ang, scale: 0.8 }); el._spin = g.to(rock, { rotation: 360, duration: 1.0, repeat: -1, ease: 'none' }); }
+      this._asteroids.push({ el, rock, fx, fy, tx, ty, ang });
+    }
+  }
+
+  disposeAsteroids() {
+    (this._apocTweens || []).forEach((tw) => { try { tw.kill(); } catch (e) {} }); // stop any transient impact tweens still running
+    (this._asteroids || []).forEach((a) => { try { if (a.el._spin) a.el._spin.kill(); a.el.remove(); } catch (e) {} });
+    (this._apocDecals || []).forEach((d) => { try { d.remove(); } catch (e) {} });
+    this._asteroids = []; this._apocDecals = []; this._apocTweens = [];
+    const layer = document.getElementById('apoc-front'); if (layer) layer.innerHTML = '';
+  }
+
+  buildCrackBurstURI() {
+    if (this._crackBurstURI) return this._crackBurstURI;
+    const C = 150; let p = ''; const sd = (n) => { const x = Math.sin(n * 91.7) * 43758.5; return x - Math.floor(x); };
+    for (let i = 0; i < 11; i++) {
+      let x = C, y = C, a = (i / 11) * 6.283 + sd(i) * 0.4, d = 'M' + C + ',' + C; const segs = 3 + Math.floor(sd(i + 5) * 3);
+      for (let j = 0; j < segs; j++) { const len = 18 + sd(i * 5 + j) * 42; a += (sd(i * 2 + j) - 0.5) * 0.8; x += Math.cos(a) * len; y += Math.sin(a) * len; d += ' L' + x.toFixed(0) + ',' + y.toFixed(0); }
+      p += '<path d="' + d + '" stroke="rgba(235,240,250,0.7)" stroke-width="1.6" fill="none"/>';
+    }
+    this._crackBurstURI = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">' + p + '</svg>');
+    return this._crackBurstURI;
+  }
+
+  handleApocalypse() {
+    if (this.worldPhase !== 'idle') return;
+    this.worldPhase = 'apocalypse'; this._savedScroll = window.scrollY || window.pageYOffset || 0;
+    try { history.pushState({ universe: 'apoc' }, ''); this._pushedHistory = true; } catch (e) {}
+    this.lockLawBar(true); this.toast('INCOMING — brace for impact');
+    const g = this.gsap;
+    const count = this.tier === 'ultra' ? 6 : this.tier === 'low' ? 3 : 5;
+    if (!this.prefersReduced) this.spawnApocalypseAsteroids(count);
+    if (!g) { this.showImpactCard(); return; }
+    if (this._apocTl) { try { this._apocTl.kill(); } catch (e) {} } // release any prior timeline deterministically
+    this._apocTl = this.buildApocalypseTimeline(); this._apocTl.play();
+  }
+
+  buildApocalypseTimeline() {
+    const g = this.gsap; const D = 4.5;
+    const fx = document.getElementById('apoc-fx'); const cracks = document.getElementById('apoc-cracks');
+    if (cracks && !cracks.style.backgroundImage) cracks.style.backgroundImage = 'url("' + this.buildCracksDataURI() + '")';
+    g.set(fx, { opacity: 0 }); if (cracks) g.set(cracks, { opacity: 0, scale: 0.96, transformOrigin: '50% 42%' });
+    this._apocShake.amp = 0;
+    const tl = g.timeline({ paused: true, onComplete: () => this.showImpactCard(), onReverseComplete: () => this.onRebuildComplete() });
+    if (this.prefersReduced) {
+      tl.to(fx, { opacity: 1, duration: 1.0, ease: 'power1.inOut' }, 0);
+      if (cracks) tl.to(cracks, { opacity: 0.7, scale: 1, duration: 1.0, ease: 'power1.inOut' }, 0);
+      return tl;
+    }
+    tl.to(fx, { opacity: 1, duration: 1.0, ease: 'power2.in' }, 0); // crimson warning sky
+    (this._asteroids || []).forEach((a, i) => {
+      const at = 1.2 + i * 0.6; // clearly spaced, distinct strikes (>=0.6s apart -> no strobe)
+      // slow, fully on-screen descent so each asteroid is unmistakable
+      tl.fromTo(a.el, { x: a.fx, y: a.fy, rotation: a.ang, scale: 0.85, opacity: 1 }, { x: a.tx, y: a.ty, scale: 1.5, duration: 1.15, ease: 'power1.in' }, at - 1.15);
+      tl.call(() => this.impactEffect(i, a), null, at);          // SLAM into the page
+      tl.to(a.el, { scale: 0.72, duration: 0.3, ease: 'power2.out' }, at); // EMBEDS and stays visible through the aftermath (not vanished)
+    });
+    if (cracks) tl.to(cracks, { opacity: 0.92, scale: 1, duration: 2.2, ease: 'power2.out' }, 1.3); // cracks spread
+    tl.to({}, { duration: 0.2 }, D - 0.2); // resolve exactly at 4.5s
+    return tl;
+  }
+
+  impactEffect(i, a) {
+    if (!this._apocTl || this._apocTl.reversed()) return; // forward-only transients
+    const g = this.gsap; const layer = document.getElementById('apoc-front'); if (!g || !layer) return;
+    const x = a.tx, y = a.ty;
+    const add = (html, css) => { const d = document.createElement('div'); d.style.cssText = 'position:absolute;left:' + x + 'px;top:' + y + 'px;pointer-events:none;' + css; if (html) d.innerHTML = html; layer.appendChild(d); (this._apocDecals = this._apocDecals || []).push(d); return d; };
+    const tween = (tw) => { (this._apocTweens = this._apocTweens || []).push(tw); return tw; }; // track so REBUILD mid-bombardment can kill them
+    // soft, luminance-limited impact flash at the hit point
+    const fl = add('', 'width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:radial-gradient(circle, rgba(255,240,200,0.95), rgba(255,150,60,0.5) 40%, transparent 70%);mix-blend-mode:screen;');
+    tween(g.fromTo(fl, { scale: 0, opacity: 0.9 }, { scale: 42, opacity: 0, duration: 0.5, ease: 'power2.out', onComplete: () => fl.remove() }));
+    // expanding shockwave ring
+    const sw = add('', 'width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;border:3px solid rgba(255,200,140,0.9);');
+    tween(g.fromTo(sw, { scale: 0, opacity: 0.95 }, { scale: 34, opacity: 0, duration: 0.8, ease: 'power2.out', onComplete: () => sw.remove() }));
+    // crack burst that persists (cleared on REBUILD)
+    const ck = add('<img alt="" src="' + this.buildCrackBurstURI() + '" style="position:absolute;left:-150px;top:-150px;width:300px;height:300px;">', 'width:0;height:0;');
+    tween(g.fromTo(ck.firstChild, { opacity: 0, scale: 0.5 }, { opacity: 0.85, scale: 1, duration: 0.3, ease: 'power2.out' }));
+    // bounded shake of the page content + the 3D camera
+    if (!this.prefersReduced) {
+      const root = document.getElementById('universe-root');
+      if (root) g.fromTo(root, { x: 0, y: 0 }, { x: 7, y: -5, duration: 0.05, repeat: 5, yoyo: true, ease: 'power1.inOut', onComplete: () => g.set(root, { x: 0, y: 0 }) });
+      g.to(this._apocShake, { amp: 0.5, duration: 0.07, ease: 'power2.out' }); g.to(this._apocShake, { amp: 0, duration: 0.7, delay: 0.07, ease: 'power2.out' });
+    }
+    this.burst(x, y); if (this.laws && this.laws.sound) this.blip(0.8); this.scatterDebris();
+  }
+
+  scatterDebris() {
+    if (!this.engine) return; const M = window.Matter; const cx = window.innerWidth / 2, cy = window.innerHeight * 0.42;
+    this.bodies.forEach((b, k) => {
+      if (b.consumed) return; M.Sleeping.set(b.body, false);
+      const dx = b.body.position.x - cx, dy = b.body.position.y - cy; const d = Math.max(40, Math.hypot(dx, dy)); const f = 0.05 * b.body.mass;
+      M.Body.applyForce(b.body, b.body.position, { x: dx / d * f, y: dy / d * f + 0.022 * b.body.mass });
+      M.Body.setAngularVelocity(b.body, ((k % 5) - 2) * 0.12); // deterministic tumble
+    });
+  }
+
+  showImpactCard() {
+    this.worldPhase = 'impacted';
+    // arm the recovery safety FIRST, before any early-return, so the site is never left broken
+    this._apocAuto = setTimeout(() => { if (this.worldPhase === 'impacted') this.rebuild(); }, 14000);
+    const g = this.gsap; const card = document.getElementById('impact-card'); const title = document.getElementById('impact-title'); const btn = document.getElementById('rebuild-btn');
+    if (!card) return; card.style.display = 'flex';
+    if (g && title && btn) {
+      g.fromTo(title, { opacity: 0, scale: 1.1, letterSpacing: '0.2em' }, { opacity: 1, scale: 1, letterSpacing: '0.06em', duration: 0.9, ease: 'power2.out' });
+      g.set(btn, { display: 'inline-flex', opacity: 0, y: 12 });
+      g.to(btn, { opacity: 1, y: 0, duration: 0.6, delay: 1.0, ease: 'power3.out', onComplete: () => { btn.style.animation = 'revivePulse 2.4s ease-in-out infinite'; try { btn.focus(); } catch (e) {} } });
+    } else { if (title) title.style.opacity = '1'; if (btn) btn.style.display = 'inline-flex'; }
+  }
+
+  rebuild() {
+    if (this.worldPhase !== 'impacted' && this.worldPhase !== 'apocalypse') return;
+    if (this._apocAuto) { clearTimeout(this._apocAuto); this._apocAuto = null; }
+    this.worldPhase = 'rebuilding';
+    const g = this.gsap; const card = document.getElementById('impact-card'); const title = document.getElementById('impact-title'); const btn = document.getElementById('rebuild-btn');
+    if (btn) btn.style.animation = 'none';
+    this.toast('REBUILDING — restoring the universe');
+    try { this.resetUniverse(); } catch (e) {} // letters fly home elastically
+    const reverseNow = () => { if (this._apocTl) this._apocTl.reverse(); else this.onRebuildComplete(); };
+    if (g && card) { g.to([title, btn], { opacity: 0, duration: 0.35, ease: 'power2.in' }); g.to(card, { opacity: 0, duration: 0.45, ease: 'power2.in', onComplete: () => { card.style.display = 'none'; card.style.opacity = '1'; reverseNow(); } }); }
+    else { if (card) card.style.display = 'none'; reverseNow(); }
+  }
+
+  onRebuildComplete() {
+    const g = this.gsap; const fx = document.getElementById('apoc-fx');
+    if (g) g.set(fx, { opacity: 0 });
+    this.disposeAsteroids();
+    if (g) g.set(document.getElementById('universe-root'), { x: 0, y: 0, clearProps: 'transform' });
+    this._apocShake.amp = 0;
+    this.lockLawBar(false);
+    const y = this._savedScroll || 0;
+    if (this.lenis) { try { this.lenis.scrollTo(y, { immediate: true }); } catch (e) { window.scrollTo(0, y); } } else window.scrollTo(0, y);
+    try { if (this._apocTl) this._apocTl.kill(); } catch (e) {} this._apocTl = null;
+    this.worldPhase = 'idle';
+    this._reconcileHistory();
+  }
+
   loop() {
     this._raf = requestAnimationFrame(() => this.loop());
     if (this._hidden) return;
@@ -1657,6 +1935,7 @@ class Portfolio {
       if (o.crystal) { o.crystal.rotation.x = t * 0.3; o.crystal.rotation.y = t * 0.45; }
       if (o.cards) o.grp.children.forEach((c, ci) => { c.position.y = (c.userData.by || 0) + Math.sin(t * 0.6 + ci) * 0.12; });
     }
+    this.animateRoamers(t);
 
     const vh = window.innerHeight;
     const probe = (window.scrollY || window.pageYOffset || 0) + vh * 0.5;
@@ -1687,6 +1966,8 @@ class Portfolio {
     this.camState.ty += (ty - this.camState.ty) * 0.08;
     this.camState.tz += (tz - this.camState.tz) * 0.08;
     camera.position.set(this.camState.px, this.camState.py, this.camState.pz);
+    // bounded, deterministic camera shake during the Apocalypse impacts
+    if (this._apocShake && this._apocShake.amp > 0.0001) { const a = Math.min(this._apocShake.amp, 0.6); camera.position.x += Math.sin(t * 53.0) * a * 0.12; camera.position.y += Math.cos(t * 61.0) * a * 0.12; }
     camera.lookAt(this.camState.tx, this.camState.ty, this.camState.tz);
 
     // atmosphere particles drift + subtle cursor parallax; animate film grain

@@ -10,6 +10,8 @@
 <meta property="og:description" content="An interactive 3D portfolio with a 'Laws of the Universe' physics playground. Angular · Node.js · AWS · Generative AI · SaaS · CRM & Q2C.">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0a0f">
+<link rel="icon" type="image/svg+xml" href="./assets/earth.svg?v=9">
+<link rel="apple-touch-icon" href="./assets/earth.svg?v=9">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,7 +27,7 @@
   }
 }
 </script>
-<script type="module" src="./assets/js/gfx.js?v=3"></script>
+<script type="module" src="./assets/js/gfx.js?v=9"></script>
 
 <!-- animation libs (UMD globals): GSAP + ScrollTrigger, Lenis smooth scroll, Matter.js physics -->
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
@@ -33,7 +35,7 @@
 <script src="https://cdn.jsdelivr.net/npm/lenis@1.1.13/dist/lenis.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
 
-<link rel="stylesheet" href="./assets/css/styles.css?v=3">
+<link rel="stylesheet" href="./assets/css/styles.css?v=9">
 </head>
 <body>
 
@@ -52,10 +54,10 @@
 
 <nav id="nav" style="position:fixed;top:0;left:0;width:100%;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:22px clamp(20px,5vw,56px);">
   <a href="#home" data-target="home" data-magnetic="0.2" style="display:inline-flex;align-items:center;gap:12px;">
-    <span style="width:38px;height:38px;border-radius:11px;background:var(--accent-grad);display:grid;place-items:center;box-shadow:0 6px 22px rgba(139,92,246,0.45);font-family:'Clash Display',sans-serif;font-weight:700;font-size:17px;color:#0a0a0f;transition:transform .35s cubic-bezier(.2,.8,.2,1);" style-hover="transform:rotate(-8deg) scale(1.06)">SA</span>
+    <img src="./assets/earth.svg?v=9" alt="Earth" width="38" height="38" style="display:block;width:38px;height:38px;border-radius:50%;box-shadow:0 6px 22px rgba(34,150,243,0.5), 0 0 0 1px rgba(140,210,255,0.25);transition:transform .6s cubic-bezier(.2,.8,.2,1);" style-hover="transform:rotate(-18deg) scale(1.06)">
     <span style="display:flex;flex-direction:column;line-height:1.1;">
       <span style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.01em;">Syed Abdul Kareem</span>
-      <span id="nav-role" style="font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--muted);">Full Stack Engineer</span>
+      <span id="nav-role" style="font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--muted);">From Earth</span>
     </span>
   </a>
   <div id="nav-links" style="display:flex;align-items:center;gap:30px;">
@@ -283,6 +285,7 @@
   <button data-law-btn="blackhole" aria-label="Black hole singularity — tap again to swallow the universe" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">⚫</span><span data-law-label data-bh-label>Black Hole</span></button>
   <button data-law-btn="time" aria-label="Time — freeze, rewind, fast-forward" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">🕰️</span><span data-law-label data-time-label>Time</span></button>
   <button data-law-btn="bigbang" aria-label="Big Bang explosion" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">💥</span><span data-law-label>Big Bang</span></button>
+  <button data-law-btn="apocalypse" aria-label="Apocalypse — asteroid bombardment" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid rgba(255,90,50,0.45);background:rgba(255,70,40,0.09);color:#ffb59a;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;box-shadow:0 0 14px rgba(255,80,40,0.25);transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:#ff6a3d;color:#fff" style-focus="outline:2px solid #ff6a3d;outline-offset:2px"><span style="font-size:15px;line-height:1;">☄️</span><span data-law-label>Apocalypse</span></button>
   <span style="flex:none;width:1px;height:24px;background:var(--line);margin:0 2px;"></span>
   <button data-law-btn="reset" aria-label="Reset universe" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 14px;border-radius:12px;border:0;background:linear-gradient(120deg,#A78BFA,#22D3EE);color:#0a0a0f;font-size:13px;font-weight:700;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;" style-focus="outline:2px solid #fff;outline-offset:2px"><span style="font-size:15px;line-height:1;">♻️</span><span data-law-label>Reset</span></button>
   <button id="law-close" aria-label="Close physics lab" style="flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:34px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:15px;cursor:pointer;" style-hover="color:#fff;border-color:var(--accent)" style-focus="outline:2px solid var(--accent-2);outline-offset:2px">✕</button>
@@ -295,6 +298,21 @@
   <div id="swallow-swirl" style="position:absolute;inset:-20%;background:conic-gradient(from 0deg, rgba(34,211,238,0.0), rgba(139,92,246,0.18), rgba(34,211,238,0.0), rgba(167,139,250,0.16), rgba(34,211,238,0.0));mix-blend-mode:screen;"></div>
   <div id="swallow-iris" style="position:absolute;inset:0;background:#000;-webkit-mask:radial-gradient(circle at 50% 50%, transparent var(--iris,140%), #000 calc(var(--iris,140%) + 0.5%));mask:radial-gradient(circle at 50% 50%, transparent var(--iris,140%), #000 calc(var(--iris,140%) + 0.5%));"></div>
   <div id="swallow-ring" style="position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;box-shadow:0 0 0 0 rgba(255,255,255,0.0);opacity:0;"></div>
+</div>
+
+<!-- ===================== APOCALYPSE OVERLAYS ===================== -->
+<div id="apoc-fx" style="position:fixed;inset:0;z-index:8600;pointer-events:none;opacity:0;">
+  <div id="apoc-sky" style="position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 0%, rgba(150,22,10,0.55), rgba(40,6,5,0.28) 60%, transparent);"></div>
+  <div id="apoc-vig" style="position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 45%, transparent 40%, rgba(18,0,0,0.72));"></div>
+  <div id="apoc-cracks" style="position:absolute;inset:0;opacity:0;background-repeat:no-repeat;background-position:center;background-size:cover;"></div>
+  <div id="apoc-flash" style="position:absolute;inset:0;opacity:0;background:radial-gradient(circle at 50% 42%, rgba(255,180,90,0.9), rgba(255,120,50,0.3) 35%, transparent 62%);mix-blend-mode:screen;"></div>
+  <div id="apoc-shock" style="position:absolute;left:50%;top:42%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;border:2px solid rgba(255,200,140,0);opacity:0;"></div>
+</div>
+<!-- foreground layer where asteroids visibly streak in and slam into the page -->
+<div id="apoc-front" style="position:fixed;inset:0;z-index:8620;pointer-events:none;overflow:hidden;"></div>
+<div id="impact-card" role="dialog" aria-modal="true" aria-label="Impact" style="position:fixed;inset:0;z-index:8650;display:none;flex-direction:column;align-items:center;justify-content:center;gap:26px;background:transparent;">
+  <div id="impact-title" style="position:relative;font-family:'Clash Display',serif;font-weight:700;font-size:clamp(44px,10vw,130px);letter-spacing:0.06em;color:#ffb27a;text-shadow:0 0 60px rgba(255,90,30,0.45);opacity:0;">IMPACT</div>
+  <button id="rebuild-btn" aria-label="Rebuild the site" style="position:relative;display:none;align-items:center;gap:10px;padding:15px 32px;border-radius:999px;border:1px solid rgba(255,140,90,0.6);background:rgba(255,90,40,0.08);color:#ffd9c4;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.04em;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);"><span style="font-size:15px;">⟲</span> REBUILD</button>
 </div>
 
 <!-- THE END film card + REVIVE -->
@@ -326,7 +344,7 @@
   </div>
 </div>
 
-<script src="./assets/js/data.js?v=3"></script>
-<script src="./assets/js/app.js?v=3"></script>
+<script src="./assets/js/data.js?v=9"></script>
+<script src="./assets/js/app.js?v=9"></script>
 </body>
 </html>
