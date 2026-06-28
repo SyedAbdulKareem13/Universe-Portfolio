@@ -148,8 +148,11 @@ a{text-decoration:none;color:inherit;}
 .field-line{position:absolute;left:0;bottom:0;height:2px;width:100%;background:var(--accent-grad);transform:scaleX(0);transform-origin:left;transition:transform .4s cubic-bezier(.2,.8,.2,1);border-radius:2px;}
 .field input:focus~.field-line,.field textarea:focus~.field-line{transform:scaleX(1);}
 
-/* =====================  REDUCED MOTION  ===================== */
-@media (prefers-reduced-motion: reduce){
-  *{animation-duration:0.001ms!important;animation-iteration-count:1!important;transition-duration:0.06s!important;}
-  #grain,#gl-fallback [style]{animation:none!important;}
-}
+/* =====================  REDUCED MOTION  =====================
+   Matches the design prototype: ambient decorative loops (the marquee
+   tickers, scroll dot, badge spin, pulsing dots) keep running so the page
+   still reads as designed. The heavy motion that actually causes vestibular
+   discomfort — the scroll-driven 3D camera, kinetic letter reveal, smooth
+   scroll and film grain — is reduced/disabled in app.js via the `motion`
+   flag, prefersReduced checks, initGrain() and showFallback(). We therefore
+   intentionally do NOT blanket-disable CSS animations here. */
