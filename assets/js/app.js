@@ -15,6 +15,7 @@ class Portfolio {
     this.props = { accentMode: 'Duotone', orbDistortion: 0.18, grain: true };
     this.menuOpen = false;
     this.worldPhase = 'idle'; // idle | swallowing | ended | reviving
+    this._bhLens = { strength: 0 }; // gravitational-lensing strength for the 3D black hole
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -25,6 +26,8 @@ class Portfolio {
     this.isTouch = mm('(hover: none), (pointer: coarse)');
     this.isSmall = window.innerWidth < 768;
     this.use3D = !this.isSmall && this.hasWebGL();
+    this.tier = this.detectTier();        // 'ultra' | 'high' | 'low' (graphics quality)
+    this.tierManual = false;              // becomes true once the user picks a tier
     this.useCursor = !this.isTouch;
     this.useLenis = !this.prefersReduced && !this.isTouch;
     this.motion = !this.prefersReduced;
@@ -333,7 +336,8 @@ class Portfolio {
     if (L.blackHole) return this.swallowUniverse();
     L.blackHole = true; L.preset = 'blackhole';
     L.gScaleT = 0; L.gxT = 0; L.gyT = 0; L.airDragT = 0.012;
-    this.spawnBlackHole(); this.wake();
+    if (this.three) this.spawnBlackHole3D(); else this.spawnBlackHole(); // 3D in WebGL, DOM fallback otherwise
+    this.wake();
     this.setBhLabel('Collapse');
     this.toast('SINGULARITY FORMING — tap again to collapse everything'); this.restyleButtons();
   }
@@ -354,7 +358,100 @@ class Portfolio {
     this.bhEl = bh;
   }
 
-  removeBlackHoleEl() { const bh = document.getElementById('black-hole'); if (bh) bh.remove(); this.bhEl = null; }
+  /* ---------------- 3D black hole (WebGL) ----------------
+     Event horizon (black sphere) + swirling accretion-disk shader + bright
+     photon ring + screen-space gravitational lensing (grade pass). The hero
+     sphere gives way to it. All spawn/despawn timings are fixed (no random). */
+  accretionMaterial() {
+    const THREE = window.THREE;
+    return new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: 'varying vec2 vP; void main(){ vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: `
+        uniform float uTime; varying vec2 vP;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+        float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+          float a=hash(i), b=hash(i+vec2(1.,0.)), c=hash(i+vec2(0.,1.)), d=hash(i+vec2(1.,1.));
+          return mix(mix(a,b,f.x), mix(c,d,f.x), f.y); }
+        void main(){
+          float r = length(vP); float ang = atan(vP.y, vP.x);
+          float inner = smoothstep(0.55, 0.66, r);
+          float outer = 1.0 - smoothstep(1.45, 1.85, r);
+          float mask = inner * outer; if (mask <= 0.001) discard;
+          float spin = ang * 2.0 + uTime * (2.6 - r * 0.9);                 // differential rotation, inner faster
+          float bands = 0.6 + 0.4 * sin(spin * 3.0);
+          float n = noise(vec2(spin, r * 6.0 - uTime * 0.9)) * (0.6 + 0.6 * noise(vec2(ang * 3.0, r * 2.0 + uTime * 0.3)));
+          float doppler = 0.4 + 0.6 * smoothstep(-1.0, 1.0, sin(ang));      // relativistic beaming — one side brighter
+          float intensity = mask * (0.4 + 0.6 * bands) * (0.45 + 0.7 * n) * doppler;
+          float tr = clamp((r - 0.55) / (1.85 - 0.55), 0.0, 1.0);
+          // Interstellar amber/gold temperature ramp: hot white inner -> deep amber rim (no blue)
+          vec3 white = vec3(1.0, 0.96, 0.86), gold = vec3(1.0, 0.72, 0.34), amber = vec3(0.82, 0.38, 0.15);
+          vec3 col = mix(white, mix(gold, amber, smoothstep(0.35, 1.0, tr)), smoothstep(0.0, 0.45, tr));
+          gl_FragColor = vec4(col * intensity * 1.7, intensity);
+        }`,
+    });
+  }
+
+  spawnBlackHole3D() {
+    const THREE = window.THREE; const s = this.three.scene; const g = this.gsap;
+    if (this.bh3d) return;
+    const grp = new THREE.Group();
+    // event horizon — pure black, opaque so it occludes the disk's far side (the lensed arc wraps over the top)
+    const horizon = new THREE.Mesh(new THREE.SphereGeometry(0.5, 64, 64), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    horizon.renderOrder = 0; grp.add(horizon);
+    // bright thin photon / Einstein ring hugging the shadow — Gargantua's halo (blooms)
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.54, 0.014, 28, 256), new THREE.MeshBasicMaterial({ color: 0xffe6b0 }));
+    ring.renderOrder = 2; grp.add(ring);
+    // accretion disk (shader fade radii 0.55..1.85 — keep matched); nearly edge-on so the far side arcs over the top
+    const disk = new THREE.Mesh(new THREE.RingGeometry(0.55, 1.85, 300, 1), this.accretionMaterial());
+    disk.rotation.x = -1.2; disk.renderOrder = 1; grp.add(disk);
+    this._bhDisk = disk;
+    // PARENT TO CAMERA so it is locked to the exact middle of the screen, sized to sit centred
+    grp.position.set(0, 0, -3.4);
+    this.three.camera.add(grp);
+    this.bh3d = grp; this._bhLens.strength = 0;
+    grp.scale.setScalar(0.001);
+    this.fadeHeroAmbient(0.1, 0.7); // declutter rings/shell/orbiters/glow so the black hole stands alone
+    if (g) {
+      g.to(grp.scale, { x: 0.5, y: 0.5, z: 0.5, duration: 0.8, ease: 'power2.out' });   // fixed 0.8s spawn, well-sized
+      g.to(this._bhLens, { strength: 0.85, duration: 0.8, ease: 'power2.out' });
+      if (this.sphere) g.to(this.sphere.scale, { x: 0.001, y: 0.001, z: 0.001, duration: 0.7, ease: 'power2.in' });
+    } else {
+      grp.scale.setScalar(0.5); this._bhLens.strength = 0.85; if (this.sphere) this.sphere.scale.setScalar(0.001);
+    }
+  }
+
+  fadeHeroAmbient(factor, dur) {
+    const g = this.gsap;
+    (this._heroAmbient || []).forEach((o) => {
+      if (!o || !o.material) return; o.material.transparent = true;
+      if (o.userData._baseOp == null) o.userData._baseOp = (o.material.opacity != null ? o.material.opacity : 1);
+      const target = o.userData._baseOp * factor;
+      if (g) g.to(o.material, { opacity: target, duration: dur, ease: 'power2.inOut' }); else o.material.opacity = target;
+    });
+  }
+
+  restoreHeroAmbient(dur) {
+    const g = this.gsap;
+    (this._heroAmbient || []).forEach((o) => {
+      if (!o || !o.material || o.userData._baseOp == null) return;
+      if (g) g.to(o.material, { opacity: o.userData._baseOp, duration: dur, ease: 'power2.out' }); else o.material.opacity = o.userData._baseOp;
+    });
+  }
+
+  removeBlackHole3D() {
+    const g = this.gsap; const s = this.three && this.three.scene;
+    if (this.sphere && this.sphere.scale.x < 0.5) { if (g) g.to(this.sphere.scale, { x: 1, y: 1, z: 1, duration: 0.6, ease: 'power2.out' }); else this.sphere.scale.setScalar(1); }
+    this.restoreHeroAmbient(0.6);
+    this._bhLens.strength = 0;
+    if (!this.bh3d) return;
+    const grp = this.bh3d; this.bh3d = null; this._bhDisk = null;
+    const fin = () => { try { if (grp.parent) grp.parent.remove(grp); grp.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); } catch (e) {} };
+    if (g) g.to(grp.scale, { x: 0.001, y: 0.001, z: 0.001, duration: 0.5, ease: 'power3.in', onComplete: fin }); else fin();
+  }
+
+  removeBlackHoleEl() { const bh = document.getElementById('black-hole'); if (bh) bh.remove(); this.bhEl = null; this.removeBlackHole3D(); }
   setBhLabel(text) { const el = document.querySelector('[data-bh-label]'); if (el) el.textContent = text; }
 
   consume(b, cx, cy) {
@@ -368,8 +465,9 @@ class Portfolio {
 
   burst(x, y) {
     const layer = document.getElementById('phys-layer'); if (!layer) return; const g = this.gsap;
-    for (let i = 0; i < 10; i++) {
-      const d = document.createElement('div'); const ang = Math.random() * Math.PI * 2; const dist = 28 + Math.random() * 64;
+    const N = 10, dist = 64; // deterministic: evenly-spaced spokes, fixed radius/duration
+    for (let i = 0; i < N; i++) {
+      const d = document.createElement('div'); const ang = (i / N) * Math.PI * 2;
       d.style.cssText = 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:' + (i % 2 ? '#22D3EE' : '#A78BFA') + ';pointer-events:none;';
       layer.appendChild(d);
       if (g) g.fromTo(d, { x: 0, y: 0, opacity: 1 }, { x: Math.cos(ang) * dist, y: Math.sin(ang) * dist, opacity: 0, duration: 0.6, ease: 'power2.out', onComplete: () => d.remove() });
@@ -549,13 +647,12 @@ class Portfolio {
 
   buildSwallowTimeline() {
     const g = this.gsap;
+    const D = 4.0; // fixed, deterministic total duration — exactly 4 seconds
     const root = document.getElementById('universe-root');
     const fx = document.getElementById('swallow-fx');
     const swirl = document.getElementById('swallow-swirl');
     const iris = document.getElementById('swallow-iris');
     const ring = document.getElementById('swallow-ring');
-    const mount = document.getElementById('gl-mount');
-    const fb = document.getElementById('gl-fallback');
     const bar = document.getElementById('law-bar');
 
     g.set(root, { transformOrigin: '50% 50%' });
@@ -568,29 +665,33 @@ class Portfolio {
     });
 
     if (this.prefersReduced) {
-      // gentle, non-violent collapse for reduced-motion users
-      tl.to(fx, { opacity: 1, duration: 0.6, ease: 'power1.inOut' }, 0)
-        .to(iris, { '--iris': '0%', duration: 0.6, ease: 'power1.inOut' }, 0)
-        .to(root, { opacity: 0, duration: 0.6, ease: 'power1.inOut' }, 0);
+      // gentle, non-violent collapse — still exactly 4s
+      tl.to(fx, { opacity: 1, duration: 1.0, ease: 'power1.inOut' }, 0)
+        .to(iris, { '--iris': '0%', duration: 3.4, ease: 'power1.inOut' }, 0.6)
+        .to(root, { opacity: 0, duration: 3.4, ease: 'power1.inOut' }, 0.6);
+      if (this.bh3d) tl.to(this.bh3d.scale, { x: 2.2, y: 2.2, z: 2.2, duration: 3.4, ease: 'power1.inOut' }, 0.6);
       return tl;
     }
 
-    // 1 — singularity forms (0–0.8s)
+    // the 3D black hole grows and its lensing intensifies across the whole 4s
+    if (this.bh3d) {
+      tl.to(this.bh3d.scale, { x: 2.7, y: 2.7, z: 2.7, duration: D, ease: 'power3.in' }, 0);
+      tl.to(this._bhLens, { strength: 2.6, duration: D, ease: 'power3.in' }, 0);
+    }
+    // singularity forms
     tl.to(fx, { opacity: 1, duration: 0.8, ease: 'power1.in' }, 0)
-      .fromTo(swirl, { rotate: 0, scale: 1 }, { rotate: 460, scale: 1.25, duration: 4.2, ease: 'power3.in' }, 0)
-    // 2 — intake (0.6–2.2s): rotate + scale down + drift + blur, iris closing
-      .to(root, { scale: 0.34, rotate: 20, filter: 'blur(6px)', duration: 1.7, ease: 'power2.in' }, 0.6)
-      .to([mount, fb], { scale: 0.55, opacity: 0.45, duration: 1.7, ease: 'power2.in' }, 0.6)
-      .to(bar, { opacity: 0, y: 30, scale: 0.6, duration: 0.6, ease: 'power2.in' }, 0.6)
-      .to(iris, { '--iris': '56%', duration: 1.5, ease: 'power1.in' }, 0.8)
-    // 3 — collapse (2.2–3.4s): rush the final stretch to a point
-      .to(root, { scale: 0.02, rotate: 96, filter: 'blur(20px)', opacity: 0, duration: 1.15, ease: 'power3.in' }, 2.2)
-      .to([mount, fb], { scale: 0.04, opacity: 0, duration: 1.15, ease: 'power3.in' }, 2.2)
-      .to(iris, { '--iris': '0%', duration: 1.0, ease: 'power3.in' }, 2.45)
-    // gravitational flash / Einstein ring as the last of the site disappears
+      .fromTo(swirl, { rotate: 0, scale: 1 }, { rotate: 440, scale: 1.25, duration: D, ease: 'power3.in' }, 0)
+    // intake — the DOM site spirals + scales down + blurs (3D black hole stays visible behind it)
+      .to(root, { scale: 0.34, rotate: 20, filter: 'blur(6px)', duration: 2.0, ease: 'power2.in' }, 0.5)
+      .to(bar, { opacity: 0, y: 30, scale: 0.6, duration: 0.6, ease: 'power2.in' }, 0.5)
+      .to(iris, { '--iris': '54%', duration: 1.7, ease: 'power1.in' }, 0.8)
+    // collapse — rush the final stretch to a point
+      .to(root, { scale: 0.015, rotate: 96, filter: 'blur(20px)', opacity: 0, duration: 1.3, ease: 'power3.in' }, 2.5)
+      .to(iris, { '--iris': '0%', duration: 1.1, ease: 'power3.in' }, 2.7)
+    // Einstein-ring flash as the last of the site disappears (resolves exactly at 4.0s)
       .fromTo(ring, { opacity: 0, scale: 0, boxShadow: '0 0 0 0 rgba(255,255,255,0)' },
-        { opacity: 1, scale: 70, boxShadow: '0 0 50px 16px rgba(255,255,255,0.9)', duration: 0.5, ease: 'power2.out' }, 3.05)
-      .to(ring, { opacity: 0, duration: 0.45, ease: 'power2.in' }, 3.55);
+        { opacity: 1, scale: 70, boxShadow: '0 0 50px 16px rgba(255,255,255,0.9)', duration: 0.5, ease: 'power2.out' }, 3.1)
+      .to(ring, { opacity: 0, duration: 0.4, ease: 'power2.in' }, 3.6);
     return tl;
   }
 
@@ -682,11 +783,13 @@ class Portfolio {
   waitForDeps() {
     return new Promise((resolve) => {
       const t0 = Date.now();
+      // 3D needs the gfx ES-module (three + post-processing addons) loaded
       const need = () => window.gsap && window.ScrollTrigger
-        && (!this.use3D || window.THREE) && (!this.useLenis || window.Lenis);
+        && (!this.use3D || (window.THREE && window.GFX))
+        && (!this.useLenis || window.Lenis);
       const tick = () => {
         if (need()) return resolve(true);
-        if (Date.now() - t0 > 5000) return resolve(false);
+        if (Date.now() - t0 > 9000) return resolve(false);
         setTimeout(tick, 80);
       };
       tick();
@@ -917,14 +1020,51 @@ class Portfolio {
     window.addEventListener('mousemove', this._mm);
   }
 
+  /* ---------------- quality tiers ----------------
+     Lightweight GPU heuristic (no detect-gpu dependency, keeps the site
+     build-free). Returns 'ultra' | 'high' | 'low'. Never picks ultra on
+     touch/mobile; never auto-runs the heavy stack on weak GPUs. */
+  detectTier() {
+    if (this.isTouch || this.isSmall) return 'low';
+    let gpu = '';
+    try {
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+      if (ext) gpu = (gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '').toLowerCase();
+    } catch (e) {}
+    const cores = navigator.hardwareConcurrency || 4;
+    const mem = navigator.deviceMemory || 4;
+    const strong = /(rtx|gtx 1[06]|rx 6|rx 7|radeon pro|apple m\d|nvidia|geforce)/.test(gpu);
+    const weak = /(intel.*(hd|uhd)|mali|adreno|swiftshader|llvmpipe|microsoft basic)/.test(gpu);
+    if (weak || cores <= 4 || mem <= 4) return 'high'; // still good, just no SSAO/DoF
+    if (strong && cores >= 8) return 'ultra';
+    return 'high';
+  }
+
+  tierConfig(tier) {
+    const dpr = window.devicePixelRatio || 1;
+    const reduce = this.prefersReduced;
+    const P = (n) => (reduce ? Math.round(n * 0.4) : n);
+    if (tier === 'ultra') return { dpr: Math.min(dpr, 2), antialias: true, composer: true, bloom: true, ssao: true, dof: !reduce, shadows: true, particles: P(1500) };
+    if (tier === 'low') return { dpr: 1, antialias: false, composer: false, bloom: false, ssao: false, dof: false, shadows: false, particles: P(280) };
+    return { dpr: Math.min(dpr, 1.75), antialias: true, composer: true, bloom: true, ssao: false, dof: false, shadows: false, particles: P(800) }; // high
+  }
+
   /* ---------------- three.js ---------------- */
   initThree() {
     const THREE = window.THREE;
+    const cfg = this.cfg = this.tierConfig(this.tier);
     const mount = document.getElementById('gl-mount');
     const w = window.innerWidth, h = window.innerHeight;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    const renderer = new THREE.WebGLRenderer({ antialias: cfg.antialias, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: true, stencil: false });
+    renderer.setPixelRatio(Math.min(cfg.dpr, 2));
     renderer.setSize(w, h); renderer.setClearColor(0x000000, 0);
+    // filmic, game-cinematic output
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    if (cfg.shadows) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; }
     renderer.domElement.style.width = '100%'; renderer.domElement.style.height = '100%';
     mount.appendChild(renderer.domElement);
 
@@ -934,7 +1074,9 @@ class Portfolio {
     camera.position.set(0, 0, 5.2);
 
     this.three = { THREE, renderer, scene, camera };
+    scene.add(camera); // so camera-parented objects (the 3D black hole, kept dead-centre) get rendered
     this.camState = { px: 0, py: 0, pz: 5.2, tx: 0, ty: 0, tz: 0 };
+    this._lastT = 0;
     this.stations = [
       { p: [0, 0, 5.2], t: [0, 0, 0] },
       { p: [1.2, -7, 4.6], t: [0.4, -7, 0] },
@@ -944,12 +1086,180 @@ class Portfolio {
       { p: [0, -35, 5.0], t: [0, -35, 0] },
     ];
 
-    this.buildGlow(); this.buildSphere(); this.buildShell(); this.buildRings(); this.buildOrbiters(); this.buildTorus(); this.buildShards(); this.buildStars();
+    // image-based lighting: procedural RoomEnvironment -> PMREM (no asset weight,
+    // gives realistic reflections + cohesive mood for the PBR materials)
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      this.envRT = pmrem.fromScene(new window.GFX.RoomEnvironment(), 0.04);
+      scene.environment = this.envRT.texture;
+      pmrem.dispose();
+    } catch (e) { console.warn('IBL env failed', e); }
+
+    // a couple of real lights for spec highlights + (ultra) contact shadow
+    const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(3, 4, 5);
+    const rim = new THREE.PointLight(0x22D3EE, 24, 40); rim.position.set(-4, -1, 2);
+    const fill = new THREE.PointLight(0x8B5CF6, 18, 40); fill.position.set(4, 2, -2);
+    scene.add(key, rim, fill);
+
+    this.buildGlow(); this.buildSphere(); this.buildShell(); this.buildRings(); this.buildOrbiters(); this.buildTorus(); this.buildShards(); this.buildStars(); this.buildParticles(cfg.particles);
+    // hero-centred objects to fade out when the black hole takes the stage
+    this._heroAmbient = [this.shell, this.glowV, this.glowC].concat(this.rings || []).concat(this.orbiters || []).filter(Boolean);
+    if (this.tier !== 'low') this.buildSectionObjects();
+    this.buildRocket();
     this._sectionEls = ['home', 'about', 'skills', 'experience', 'projects', 'contact'].map((id) => document.getElementById(id)).filter(Boolean);
     this._clock = new THREE.Clock();
+    this._bhScreen = new THREE.Vector3();
+
+    if (cfg.composer) this.buildComposer(cfg);
+    this.buildQualityUI();
+
+    // fps monitor for auto-downgrade
+    this._fps = { last: 0, acc: 0, frames: 0, low: 0 };
     this.hideFallback();
     document.addEventListener('visibilitychange', () => { this._hidden = document.hidden; });
     this.loop();
+  }
+
+  /* ---------------- post-processing composer (tier-aware) ---------------- */
+  buildComposer(cfg) {
+    const THREE = window.THREE; const G = window.GFX;
+    const { renderer, scene, camera } = this.three;
+    const w = window.innerWidth, h = window.innerHeight;
+    const composer = new G.EffectComposer(renderer);
+    composer.setPixelRatio(renderer.getPixelRatio());
+    composer.setSize(w, h);
+    composer.addPass(new G.RenderPass(scene, camera));
+
+    if (cfg.ssao) {
+      const ssao = new G.SSAOPass(scene, camera, w, h);
+      ssao.kernelRadius = 0.7; ssao.minDistance = 0.0016; ssao.maxDistance = 0.12;
+      composer.addPass(ssao); this.ssaoPass = ssao;
+    }
+    if (cfg.bloom) {
+      const bloom = new G.UnrealBloomPass(new THREE.Vector2(w, h), 0.7, 0.6, 0.88); // strength, radius, threshold (selective — higher threshold = less wash)
+      composer.addPass(bloom); this.bloomPass = bloom;
+    }
+    if (cfg.dof) {
+      const bokeh = new G.BokehPass(scene, camera, { focus: 5.2, aperture: 0.0009, maxblur: 0.008, width: w, height: h });
+      composer.addPass(bokeh); this.bokehPass = bokeh;
+    }
+    composer.addPass(new G.OutputPass()); // ACES tone-map + sRGB encode
+
+    // final display-space grade: subtle chromatic aberration + vignette + film grain
+    const grade = new G.ShaderPass(this.gradeShader());
+    grade.uniforms.uReduce.value = this.prefersReduced ? 1 : 0;
+    grade.uniforms.uRes.value.set(w, h);
+    composer.addPass(grade); this.gradePass = grade;
+
+    this.composer = composer;
+  }
+
+  disposeComposer() {
+    if (!this.composer) return;
+    try { this.composer.passes.forEach((p) => { if (p.dispose) p.dispose(); }); } catch (e) {}
+    try { this.composer.renderTarget1 && this.composer.renderTarget1.dispose(); this.composer.renderTarget2 && this.composer.renderTarget2.dispose(); } catch (e) {}
+    this.composer = null; this.bloomPass = this.ssaoPass = this.bokehPass = this.gradePass = null;
+  }
+
+  gradeShader() {
+    return {
+      uniforms: {
+        tDiffuse: { value: null }, uTime: { value: 0 }, uAberration: { value: 0.0016 },
+        uVignette: { value: 1.08 }, uGrain: { value: 0.045 }, uReduce: { value: 0 },
+        uRes: { value: new window.THREE.Vector2(1280, 720) },
+        uBh: { value: new window.THREE.Vector3(0.5, 0.5, 0) }, // xy = black-hole screen pos, z = lens strength
+      },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: `
+        uniform sampler2D tDiffuse; uniform float uTime, uAberration, uVignette, uGrain, uReduce;
+        uniform vec2 uRes; uniform vec3 uBh; varying vec2 vUv;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+        void main(){
+          vec2 uv = vUv;
+          // gravitational lensing: bend + swirl the image toward the black hole
+          if (uBh.z > 0.001) {
+            float asp = uRes.x / max(uRes.y, 1.0);
+            vec2 d = uv - uBh.xy; d.x *= asp;
+            float dist = length(d);
+            float pull = min(uBh.z * 0.05 / (dist * dist + 0.015), 0.6);
+            float sw = uBh.z * 0.35 / (dist + 0.05);
+            float cs = cos(sw), sn = sin(sw);
+            d = mat2(cs, -sn, sn, cs) * d * (1.0 - pull);
+            d.x /= asp;
+            uv = uBh.xy + d;
+          }
+          vec2 dir = uv - 0.5; float r2 = dot(dir, dir);
+          // chromatic aberration grows toward the edges
+          float a = uAberration * (0.5 + r2);
+          vec3 col;
+          col.r = texture2D(tDiffuse, uv - dir * a).r;
+          col.g = texture2D(tDiffuse, uv).g;
+          col.b = texture2D(tDiffuse, uv + dir * a).b;
+          // vignette
+          float vig = smoothstep(1.15, 0.25, r2 * uVignette + 0.18);
+          col *= mix(0.78, 1.0, vig);
+          // film grain (animated unless reduced-motion)
+          float t = (uReduce > 0.5) ? 0.0 : uTime;
+          float g = hash(uv * vec2(1280.0, 720.0) + t) - 0.5;
+          col += g * uGrain;
+          gl_FragColor = vec4(col, 1.0);
+        }`,
+    };
+  }
+
+  /* ---------------- manual quality toggle (seamless, no reload) ---------------- */
+  buildQualityUI() {
+    if (document.getElementById('gfx-toggle')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'gfx-toggle';
+    wrap.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:70;display:flex;flex-direction:column;align-items:flex-end;gap:8px;font-family:Space Grotesk,sans-serif;';
+    const panel = document.createElement('div');
+    panel.style.cssText = 'display:none;flex-direction:column;gap:4px;padding:8px;border-radius:14px;border:1px solid var(--line);background:rgba(12,12,18,0.82);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 18px 50px rgba(0,0,0,0.5);';
+    ['ultra', 'high', 'low'].forEach((t) => {
+      const b = document.createElement('button');
+      b.textContent = t === 'ultra' ? 'Ultra' : t === 'high' ? 'High' : 'Low';
+      b.dataset.tier = t;
+      b.style.cssText = 'padding:7px 16px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font:600 12px Space Grotesk,sans-serif;cursor:pointer;letter-spacing:0.04em;text-align:right;';
+      b.addEventListener('click', () => { this.applyTier(t, true); });
+      panel.appendChild(b);
+    });
+    const gear = document.createElement('button');
+    gear.setAttribute('aria-label', 'Graphics quality');
+    gear.style.cssText = 'display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(10,10,18,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:#ECEDF2;font:600 12px Space Grotesk,sans-serif;letter-spacing:0.06em;cursor:pointer;box-shadow:0 8px 30px rgba(0,0,0,0.4);';
+    gear.innerHTML = '<span style="font-size:13px;">✦</span><span id="gfx-label">' + this.tier.toUpperCase() + '</span>';
+    gear.addEventListener('click', () => { panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex'; this.markTierUI(); });
+    wrap.appendChild(panel); wrap.appendChild(gear);
+    document.body.appendChild(wrap);
+    this._gfxPanel = panel; this.markTierUI();
+  }
+
+  markTierUI() {
+    const lbl = document.getElementById('gfx-label'); if (lbl) lbl.textContent = this.tier.toUpperCase();
+    if (!this._gfxPanel) return;
+    this._gfxPanel.querySelectorAll('button').forEach((b) => {
+      const on = b.dataset.tier === this.tier;
+      b.style.borderColor = on ? 'var(--accent)' : 'var(--line)';
+      b.style.background = on ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)';
+      b.style.color = on ? '#fff' : '#c9ccd8';
+    });
+  }
+
+  // seamless tier switch: rebuild composer + dpr + particle count, no reload
+  applyTier(tier, manual) {
+    if (!this.three) return;
+    this.tier = tier; if (manual) this.tierManual = true;
+    const cfg = this.cfg = this.tierConfig(tier);
+    const { renderer } = this.three;
+    renderer.setPixelRatio(Math.min(cfg.dpr, 2));
+    if (cfg.shadows) { renderer.shadowMap.enabled = true; renderer.shadowMap.type = window.THREE.PCFSoftShadowMap; }
+    else renderer.shadowMap.enabled = false;
+    this.disposeComposer();
+    if (cfg.composer) this.buildComposer(cfg);
+    this.setParticleCount(cfg.particles);
+    const w = window.innerWidth, h = window.innerHeight;
+    if (this.composer) this.composer.setSize(w, h);
+    this.markTierUI();
+    if (this.toast) this.toast('GRAPHICS — ' + tier.toUpperCase());
   }
 
   makeGlow(r, g, b) {
@@ -1012,7 +1322,7 @@ class Portfolio {
         gl_Position = projectionMatrix*viewMatrix*wp;
       }`;
     const FRAG = `
-      uniform vec3 uColorA; uniform vec3 uColorB; uniform vec3 uBase; uniform float uFresnel;
+      uniform vec3 uColorA; uniform vec3 uColorB; uniform vec3 uBase; uniform float uFresnel; uniform float uTime;
       varying float vNoise; varying vec3 vNormalW; varying vec3 vPosW;
       void main(){
         vec3 V = normalize(cameraPosition - vPosW);
@@ -1022,7 +1332,12 @@ class Portfolio {
         vec3 col = mix(uBase, accent, fres);
         col += accent*fres*0.9;
         col += accent*pow(t,3.0)*0.18;
-        gl_FragColor = vec4(col,1.0);
+        // thin-film iridescence: hue cycles with view angle + surface noise
+        vec3 irid = 0.5 + 0.5*cos(6.28318*(fres*1.3 + t*0.4 + vec3(0.0, 0.33, 0.67)) + uTime*0.15);
+        col = mix(col, col*irid*1.5, smoothstep(0.25, 1.0, fres)*0.55);
+        // bright iridescent rim feeds the bloom pass
+        col += irid * pow(fres, 3.0) * 0.6;
+        gl_FragColor = vec4(col, 1.0);
       }`;
     const geo = new THREE.SphereGeometry(1.3, 128, 128);
     this.sphereUniforms = {
@@ -1037,22 +1352,25 @@ class Portfolio {
 
   buildTorus() {
     const THREE = window.THREE; const s = this.three.scene;
-    const geo = new THREE.TorusKnotGeometry(0.85, 0.26, 170, 26, 2, 3);
-    const mat = new THREE.MeshBasicMaterial({ color: 0x8B5CF6, wireframe: true, transparent: true, opacity: 0.55 });
-    this.torus = new THREE.Mesh(geo, mat); this.torus.position.set(2.4, -7, 0); s.add(this.torus);
-    const tg = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.makeGlow(34, 211, 238), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55 }));
+    const geo = new THREE.TorusKnotGeometry(0.85, 0.26, 220, 32, 2, 3);
+    const mat = new THREE.MeshPhysicalMaterial({ color: 0x6d4bd1, metalness: 1.0, roughness: 0.16, iridescence: 1.0, iridescenceIOR: 1.5, clearcoat: 1.0, clearcoatRoughness: 0.18, emissive: 0x160b2e, emissiveIntensity: 0.5, envMapIntensity: 1.4 });
+    this.torus = new THREE.Mesh(geo, mat); this.torus.position.set(2.4, -7, 0); if (this.cfg && this.cfg.shadows) this.torus.castShadow = true; s.add(this.torus);
+    const tg = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.makeGlow(34, 211, 238), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5 }));
     tg.scale.set(5, 5, 1); tg.position.set(2.4, -7, -1); s.add(tg);
   }
 
   buildShards() {
     const THREE = window.THREE; const s = this.three.scene; this.shards = [];
-    const geos = [new THREE.OctahedronGeometry(0.2), new THREE.TetrahedronGeometry(0.22), new THREE.IcosahedronGeometry(0.17), new THREE.DodecahedronGeometry(0.18), new THREE.TorusKnotGeometry(0.12, 0.045, 64, 8)];
+    const geos = [new THREE.OctahedronGeometry(0.22), new THREE.TetrahedronGeometry(0.24), new THREE.IcosahedronGeometry(0.19), new THREE.DodecahedronGeometry(0.2), new THREE.TorusKnotGeometry(0.13, 0.05, 80, 12)];
     for (let i = 0; i < 11; i++) {
       const g = geos[i % geos.length];
-      const m = new THREE.MeshBasicMaterial({ color: i % 2 ? 0x22D3EE : 0x8B5CF6, wireframe: true, transparent: true, opacity: 0.7 });
+      const cyan = i % 2;
+      // metallic, iridescent crystals — reflect the IBL, emissive edge feeds bloom
+      const m = new THREE.MeshPhysicalMaterial({ color: cyan ? 0x22D3EE : 0x8B5CF6, metalness: 1.0, roughness: 0.22, iridescence: 0.9, iridescenceIOR: 1.4, clearcoat: 0.8, clearcoatRoughness: 0.25, emissive: cyan ? 0x0b3a44 : 0x241046, emissiveIntensity: 0.55, envMapIntensity: 1.5 });
       const mesh = new THREE.Mesh(g, m);
       const ang = (i / 11) * Math.PI * 2; const rad = 2.1 + Math.random() * 1.7;
       mesh.position.set(Math.cos(ang) * rad, (Math.random() - 0.5) * 3.0, Math.sin(ang) * 1.8 - 0.5);
+      if (this.cfg && this.cfg.shadows) mesh.castShadow = true;
       mesh.userData = { sp: 0.3 + Math.random() * 0.5, ph: Math.random() * Math.PI * 2, baseY: mesh.position.y, rot: 0.2 + Math.random() * 0.5 };
       s.add(mesh); this.shards.push(mesh);
     }
@@ -1086,12 +1404,13 @@ class Portfolio {
   buildRings() {
     const THREE = window.THREE; const s = this.three.scene; this.rings = [];
     const mk = (r, tube, col, rx, rz, op) => {
-      const g = new THREE.TorusGeometry(r, tube, 16, 200);
-      const m = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false });
+      const g = new THREE.TorusGeometry(r, tube, 16, 220);
+      // emissive neon rings — picked up by the bloom pass
+      const m = new THREE.MeshStandardMaterial({ color: 0x000000, emissive: col, emissiveIntensity: 2.4, metalness: 0.0, roughness: 0.5, transparent: true, opacity: op });
       const mesh = new THREE.Mesh(g, m); mesh.rotation.x = rx; mesh.rotation.z = rz; s.add(mesh); this.rings.push(mesh);
     };
-    mk(2.0, 0.013, 0x8B5CF6, Math.PI * 0.5, 0.32, 0.75);
-    mk(2.32, 0.008, 0x22D3EE, Math.PI * 0.42, -0.5, 0.6);
+    mk(2.0, 0.014, 0x8B5CF6, Math.PI * 0.5, 0.32, 0.85);
+    mk(2.32, 0.009, 0x22D3EE, Math.PI * 0.42, -0.5, 0.7);
   }
 
   buildOrbiters() {
@@ -1104,6 +1423,206 @@ class Portfolio {
       sp.userData = { r: 1.85 + Math.random() * 0.8, sp: 0.3 + Math.random() * 0.55, ph: Math.random() * Math.PI * 2, yr: (Math.random() - 0.5) * 1.5 };
       s.add(sp); this.orbiters.push(sp);
     }
+  }
+
+  /* GPU dust / embers — instanced points drifting + twinkling, count is tier-driven */
+  buildParticles(count) { this._dust = null; this.setParticleCount(count); }
+
+  setParticleCount(count) {
+    const THREE = window.THREE; const s = this.three.scene;
+    if (this._dust) { s.remove(this._dust); this._dust.geometry.dispose(); this._dust.material.dispose(); this._dust = null; }
+    count = Math.max(0, count | 0); if (!count) return;
+    const pos = new Float32Array(count * 3); const seed = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * 16;
+      pos[i * 3 + 1] = 2 - Math.random() * 44;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 12 - 2;
+      seed[i] = Math.random();
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+    const mat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uColorA: { value: new THREE.Color(0xA78BFA) }, uColorB: { value: new THREE.Color(0x67E8F9) }, uSize: { value: (window.devicePixelRatio || 1) } },
+      vertexShader: `uniform float uTime; uniform float uSize; attribute float aSeed; varying float vA;
+        void main(){
+          vec3 p = position;
+          p.y += sin(uTime*0.3 + aSeed*6.2831)*0.45;
+          p.x += cos(uTime*0.2 + aSeed*6.2831)*0.3;
+          vec4 mv = modelViewMatrix*vec4(p,1.0);
+          vA = 0.5 + 0.5*sin(uTime*1.6 + aSeed*22.0);
+          gl_PointSize = (3.5 + 7.0*aSeed) * uSize * (300.0 / -mv.z) * 0.045;
+          gl_Position = projectionMatrix*mv;
+        }`,
+      fragmentShader: `varying float vA; uniform vec3 uColorA; uniform vec3 uColorB;
+        void main(){
+          vec2 d = gl_PointCoord - 0.5; float r = length(d); if (r > 0.5) discard;
+          float a = smoothstep(0.5, 0.0, r) * (0.22 + 0.55*vA);
+          gl_FragColor = vec4(mix(uColorA, uColorB, vA), a);
+        }`,
+    });
+    this._dust = new THREE.Points(g, mat); this._dust.frustumCulled = false; s.add(this._dust);
+  }
+
+  /* meaningful 3D centerpiece for each section, parked at that section's camera
+     station (y = 0,-7,-14,-21,-28,-35). Each represents its content. */
+  buildSectionObjects() {
+    const THREE = window.THREE; const s = this.three.scene; this.sectionFX = [];
+    const pbr = (color, emissive, opts) => Object.assign({ color, metalness: 1, roughness: 0.22, emissive, emissiveIntensity: 0.5, envMapIntensity: 1.4 }, opts || {});
+    const neon = (emissive, ei) => new THREE.MeshStandardMaterial({ color: 0x000000, emissive, emissiveIntensity: ei == null ? 2.0 : ei, roughness: 0.5, metalness: 0 });
+
+    // SKILLS (-14): a constellation of skill "nodes" linked by faint lines (the skill cloud)
+    {
+      const grp = new THREE.Group(); grp.position.y = -14;
+      const N = 12, R = 1.7; const pts = []; const nodeGeo = new THREE.IcosahedronGeometry(0.13, 0);
+      const positions = [];
+      for (let i = 0; i < N; i++) {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / N), th = Math.PI * (1 + Math.sqrt(5)) * i;
+        const p = new THREE.Vector3(R * Math.cos(th) * Math.sin(phi), R * Math.sin(th) * Math.sin(phi), R * Math.cos(phi));
+        const cyan = i % 2;
+        const mesh = new THREE.Mesh(nodeGeo, new THREE.MeshPhysicalMaterial(pbr(cyan ? 0x22D3EE : 0x8B5CF6, cyan ? 0x0b3a44 : 0x241046, { iridescence: 0.8 })));
+        mesh.position.copy(p); grp.add(mesh); positions.push(p);
+      }
+      for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) if (positions[i].distanceTo(positions[j]) < 1.85) pts.push(positions[i].x, positions[i].y, positions[i].z, positions[j].x, positions[j].y, positions[j].z);
+      const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      grp.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x7c5cff, transparent: true, opacity: 0.22 })));
+      s.add(grp); this.sectionFX.push({ grp, spin: 0.12 });
+    }
+
+    // EXPERIENCE (-21): a vertical timeline — three glowing rings up a spine (KEBS / Ericsson / PTU)
+    {
+      const grp = new THREE.Group(); grp.position.y = -21;
+      const cols = [0xA78BFA, 0x8B5CF6, 0x22D3EE];
+      [1.0, 0.0, -1.0].forEach((y, i) => {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.5 + i * 0.28, 0.03, 16, 140), neon(cols[i], 2.0));
+        ring.position.y = y * 1.2; grp.add(ring);
+        const node = new THREE.Mesh(new THREE.IcosahedronGeometry(0.12, 0), new THREE.MeshPhysicalMaterial(pbr(cols[i], cols[i], { emissiveIntensity: 0.8 })));
+        node.position.set(0.5 + i * 0.28, y * 1.2, 0); grp.add(node);
+      });
+      grp.add(new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 3.0, 8), neon(0x7c5cff, 1.0)));
+      s.add(grp); this.sectionFX.push({ grp, spin: 0.18 });
+    }
+
+    // PROJECTS (-28): a fan of floating glass "cards"
+    {
+      const grp = new THREE.Group(); grp.position.y = -28;
+      const cardGeo = new THREE.BoxGeometry(0.95, 1.35, 0.05);
+      for (let i = 0; i < 5; i++) {
+        const card = new THREE.Mesh(cardGeo, new THREE.MeshPhysicalMaterial(pbr(0x1a1433, 0x2a1d52, { metalness: 0.6, roughness: 0.14, clearcoat: 1, emissiveIntensity: 0.35 })));
+        const ang = (i - 2) * 0.42;
+        card.position.set(Math.sin(ang) * 1.9, 0, Math.cos(ang) * 0.7 - 0.4); card.rotation.y = -ang;
+        card.userData.by = card.position.y; grp.add(card);
+      }
+      s.add(grp); this.sectionFX.push({ grp, spin: 0.05, cards: true });
+    }
+
+    // CONTACT (-35): an iridescent crystal beacon inside a halo ring
+    {
+      const grp = new THREE.Group(); grp.position.y = -35;
+      const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.95, 0), new THREE.MeshPhysicalMaterial(pbr(0x8B5CF6, 0x241046, { roughness: 0.1, iridescence: 1, iridescenceIOR: 1.6, emissiveIntensity: 0.6, envMapIntensity: 1.6 })));
+      grp.add(crystal);
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.02, 16, 160), neon(0x22D3EE, 2.0)); halo.rotation.x = Math.PI / 2.3; grp.add(halo);
+      s.add(grp); this.sectionFX.push({ grp, spin: 0.2, crystal });
+    }
+  }
+
+  /* ---------------- interactive 3D rocket ----------------
+     Follows the cursor with velocity-based thrusters; banks toward its heading;
+     after 5s of no mouse movement it flies to and perches on the nearest solid
+     object, and takes off again the instant the cursor moves. */
+  buildRocket() {
+    const THREE = window.THREE; const s = this.three.scene;
+    const grp = new THREE.Group();
+    const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xf2f4f8, metalness: 1, roughness: 0.24, clearcoat: 1, clearcoatRoughness: 0.14, envMapIntensity: 1.8 });
+    const accent = new THREE.MeshPhysicalMaterial({ color: 0x8B5CF6, metalness: 1, roughness: 0.32, emissive: 0x3a1d6e, emissiveIntensity: 0.6, envMapIntensity: 1.3 });
+    const dark = new THREE.MeshPhysicalMaterial({ color: 0x2a2d3a, metalness: 1, roughness: 0.42, envMapIntensity: 1.1 });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0x22D3EE, metalness: 0.3, roughness: 0.08, emissive: 0x0b3a44, emissiveIntensity: 1.0, clearcoat: 1 });
+    const P = (r, y) => new THREE.Vector2(r, y);
+
+    // smooth fuselage as a single lathed profile (nose tip at +Y), realistic silhouette
+    grp.add(new THREE.Mesh(new THREE.LatheGeometry([
+      P(0.0, -0.16), P(0.055, -0.15), P(0.078, -0.10), P(0.088, -0.02),
+      P(0.09, 0.06), P(0.082, 0.13), P(0.06, 0.21), P(0.032, 0.28), P(0.0, 0.33),
+    ], 32), bodyMat));
+    // painted accent band
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.0915, 0.0915, 0.05, 32), accent); grp.add(band);
+    // flared bell nozzle (dark metal)
+    grp.add(new THREE.Mesh(new THREE.LatheGeometry([P(0.03, -0.15), P(0.045, -0.2), P(0.075, -0.27)], 28), dark));
+    // cockpit window + rim
+    const win = new THREE.Mesh(new THREE.CircleGeometry(0.028, 24), glass); win.position.set(0, 0.13, 0.082); win.lookAt(0, 0.17, 1.2); grp.add(win);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.006, 12, 28), accent); rim.position.copy(win.position); rim.quaternion.copy(win.quaternion); grp.add(rim);
+    // 3 swept-back fins (extruded shape, radial)
+    const fs = new THREE.Shape(); fs.moveTo(0.07, 0.02); fs.lineTo(0.07, -0.13); fs.lineTo(0.2, -0.2); fs.lineTo(0.085, -0.02); fs.closePath();
+    const finGeo = new THREE.ExtrudeGeometry(fs, { depth: 0.012, bevelEnabled: false }); finGeo.translate(0, 0, -0.006);
+    for (let i = 0; i < 3; i++) { const pivot = new THREE.Group(); pivot.rotation.y = (i / 3) * Math.PI * 2; pivot.add(new THREE.Mesh(finGeo, accent)); grp.add(pivot); }
+    // thruster flames
+    const flameMat = () => new THREE.MeshBasicMaterial({ color: 0x8fe9ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const mkFlame = (px) => { const f = new THREE.Mesh(new THREE.ConeGeometry(0.042, 0.22, 16), flameMat()); f.position.set(px, -0.3, 0); f.rotation.z = Math.PI; grp.add(f); return f; };
+    const main = mkFlame(0), left = mkFlame(-0.045), right = mkFlame(0.045);
+    left.scale.setScalar(0.55); right.scale.setScalar(0.55);
+
+    grp.scale.setScalar(0.62);  // a bit smaller per request
+    grp.position.set(1.4, 0.6, 2.6); s.add(grp);
+    this.rocket = {
+      grp, main, left, right, vel: new THREE.Vector3(), prev: grp.position.clone(),
+      up: new THREE.Vector3(0, 1, 0), q: new THREE.Quaternion(), state: 'fly',
+      restTarget: new THREE.Vector3(), restNormal: new THREE.Vector3(0, 1, 0),
+      tmpA: new THREE.Vector3(), tmpB: new THREE.Vector3(),
+    };
+  }
+
+  updateRocket(t, dt) {
+    const R = this.rocket; if (!R) return; const cam = this.three.camera;
+    if (this.worldPhase !== 'idle') { R.grp.visible = false; return; } // hidden during the swallow cinematic
+    R.grp.visible = true;
+    const idle = (Date.now() - (this._lastMove || 0)) > 5000;
+
+    // cursor -> a point ~3.2 units in front of the camera (slightly below dead-centre)
+    const target = R.tmpA.set(this.mouse.x * 0.92, this.mouse.y * 0.92 - 0.12, 0.5).unproject(cam);
+    const dir = R.tmpB.copy(target).sub(cam.position).normalize();
+    target.copy(cam.position).addScaledVector(dir, 3.2);
+
+    if (!idle && (R.state === 'rested' || R.state === 'landing')) R.state = 'takeoff';
+
+    if (R.state === 'fly' || R.state === 'takeoff') {
+      R.prev.copy(R.grp.position);
+      R.grp.position.lerp(target, Math.min(1, dt * 4.5));
+      R.vel.copy(R.grp.position).sub(R.prev).multiplyScalar(1 / dt);
+      const speed = R.vel.length();
+      if (speed > 0.25) { const vdir = R.tmpB.copy(R.vel).normalize(); R.q.setFromUnitVectors(R.up, vdir); R.grp.quaternion.slerp(R.q, Math.min(1, dt * 6)); }
+      const k = Math.min(speed / 7, 1);                       // 0..1 by speed
+      R.main.material.opacity = 0.55 + k * 0.45; R.main.scale.set(1, 0.7 + k * 1.6 + Math.sin(t * 45) * 0.06, 1);
+      const side = k > 0.45 ? (k - 0.45) / 0.55 : 0;          // side thrusters ignite only at higher speed
+      R.left.material.opacity = side * 0.8; R.left.scale.set(0.6, 0.4 + side * 1.1, 0.6);
+      R.right.material.opacity = side * 0.8; R.right.scale.set(0.6, 0.4 + side * 1.1, 0.6);
+      if (R.state === 'takeoff' && R.grp.position.distanceTo(target) < 0.6) R.state = 'fly';
+      if (idle && R.state === 'fly') this.rocketBeginLanding();
+    } else if (R.state === 'landing') {
+      R.grp.position.lerp(R.restTarget, Math.min(1, dt * 3));
+      R.q.setFromUnitVectors(R.up, R.restNormal); R.grp.quaternion.slerp(R.q, Math.min(1, dt * 4));
+      R.main.material.opacity *= 0.9; R.left.material.opacity *= 0.9; R.right.material.opacity *= 0.9; R.main.scale.y *= 0.95;
+      if (R.grp.position.distanceTo(R.restTarget) < 0.06) { R.state = 'rested'; R.main.material.opacity = 0; R.left.material.opacity = 0; R.right.material.opacity = 0; }
+    } else { // rested
+      R.grp.position.lerp(R.restTarget, 0.08);
+      R.main.material.opacity = 0.08 + 0.05 * Math.sin(t * 3); // idle pilot light
+    }
+  }
+
+  rocketBeginLanding() {
+    const R = this.rocket; const THREE = window.THREE;
+    const cands = [];
+    if (this.sphere && this.sphere.scale.x > 0.5) cands.push({ c: this.sphere.getWorldPosition(new THREE.Vector3()), r: 1.35 });
+    if (this.torus) cands.push({ c: this.torus.getWorldPosition(new THREE.Vector3()), r: 0.95 });
+    (this.shards || []).forEach((m) => cands.push({ c: m.getWorldPosition(new THREE.Vector3()), r: 0.32 }));
+    (this.sectionFX || []).forEach((o) => cands.push({ c: o.grp.getWorldPosition(new THREE.Vector3()), r: 1.1 }));
+    if (!cands.length) return;
+    let best = null, bd = 1e9;
+    cands.forEach((o) => { const d = R.grp.position.distanceTo(o.c); if (d < bd) { bd = d; best = o; } });
+    R.restNormal.subVectors(R.grp.position, best.c).normalize();
+    if (R.restNormal.lengthSq() < 0.001) R.restNormal.set(0, 1, 0);
+    R.restTarget.copy(best.c).addScaledVector(R.restNormal, best.r + 0.2);
+    R.state = 'landing';
   }
 
   loop() {
@@ -1133,6 +1652,11 @@ class Portfolio {
     if (this.shell) { this.shell.rotation.y -= this.motion ? 0.0012 : 0.0005; this.shell.rotation.x += this.motion ? 0.0006 : 0.0003; }
     if (this.rings) this.rings.forEach((r, k) => { r.rotation.z += (this.motion ? 0.004 : 0.0018) * (k ? -1 : 1); });
     if (this.orbiters) this.orbiters.forEach((o) => { const u = o.userData; const a = (this.motion ? t : t * 0.5) * u.sp + u.ph; o.position.set(Math.cos(a) * u.r, u.yr + Math.sin(a * 1.3) * 0.32, Math.sin(a) * u.r * 0.8); });
+    if (this.sectionFX) for (let q = 0; q < this.sectionFX.length; q++) {
+      const o = this.sectionFX[q]; o.grp.rotation.y = t * o.spin;
+      if (o.crystal) { o.crystal.rotation.x = t * 0.3; o.crystal.rotation.y = t * 0.45; }
+      if (o.cards) o.grp.children.forEach((c, ci) => { c.position.y = (c.userData.by || 0) + Math.sin(t * 0.6 + ci) * 0.12; });
+    }
 
     const vh = window.innerHeight;
     const probe = (window.scrollY || window.pageYOffset || 0) + vh * 0.5;
@@ -1164,7 +1688,45 @@ class Portfolio {
     this.camState.tz += (tz - this.camState.tz) * 0.08;
     camera.position.set(this.camState.px, this.camState.py, this.camState.pz);
     camera.lookAt(this.camState.tx, this.camState.ty, this.camState.tz);
-    renderer.render(scene, camera);
+
+    // atmosphere particles drift + subtle cursor parallax; animate film grain
+    if (this._dust) { this._dust.material.uniforms.uTime.value = t; this._dust.rotation.y = this.mouse.x * 0.05; this._dust.position.x = this.mouse.x * 0.3; }
+
+    const dt = Math.min(0.05, Math.max(0.001, t - (this._lastT || t))); this._lastT = t;
+
+    // 3D black hole: swirl the accretion disk + drive the lensing uniform (world pos, since it's camera-parented)
+    if (this.bh3d) {
+      if (this._bhDisk) { this._bhDisk.material.uniforms.uTime.value = t; this._bhDisk.rotation.z = t * 0.25; }
+    }
+    if (this.gradePass) {
+      this.gradePass.uniforms.uTime.value = t;
+      const u = this.gradePass.uniforms.uBh.value;
+      if (this.bh3d) { const v = this.bh3d.getWorldPosition(this._bhScreen).project(camera); u.set(v.x * 0.5 + 0.5, v.y * 0.5 + 0.5, this._bhLens.strength); }
+      else u.z = 0;
+    }
+
+    this.updateRocket(t, dt);
+
+    if (this.composer) this.composer.render(); else renderer.render(scene, camera);
+    this.sampleFps();
+  }
+
+  /* watch frame time; auto-step the tier down if we can't hold ~45fps
+     (skipped once the user has manually chosen a tier) */
+  sampleFps() {
+    if (this.tierManual || !this._fps) return;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const f = this._fps;
+    if (!f.last) { f.last = now; return; }
+    const dt = now - f.last; f.last = now;
+    if (dt <= 0 || dt > 200) return; // ignore background-tab throttling / hiccups
+    f.acc += dt; f.frames++;
+    if (f.frames >= 60) {
+      const fps = 1000 / (f.acc / f.frames); f.acc = 0; f.frames = 0;
+      if (fps < 45) {
+        if (++f.low >= 2) { f.low = 0; if (this.tier === 'ultra') this.applyTier('high', false); else if (this.tier === 'high') this.applyTier('low', false); }
+      } else f.low = 0;
+    }
   }
 
   onResize() {
@@ -1172,6 +1734,11 @@ class Portfolio {
       const w = window.innerWidth, h = window.innerHeight;
       this.three.camera.aspect = w / h; this.three.camera.updateProjectionMatrix();
       this.three.renderer.setSize(w, h);
+      if (this.composer) this.composer.setSize(w, h);
+      if (this.bloomPass) this.bloomPass.setSize(w, h);
+      if (this.ssaoPass) this.ssaoPass.setSize(w, h);
+      if (this.bokehPass && this.bokehPass.setSize) this.bokehPass.setSize(w, h);
+      if (this.gradePass) this.gradePass.uniforms.uRes.value.set(w, h);
     }
     if (this.engine) this.buildWalls();
     if (this.ST) this.ST.refresh();
