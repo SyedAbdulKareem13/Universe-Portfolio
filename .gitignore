@@ -1,0 +1,17 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# dependencies (none required — kept for safety if tooling is added later)
+node_modules/
+.cache/
+
+# Vercel
+.vercel/
+
+# env
+.env
+.env.local
+*.local

@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Syed Abdul Kareem — Full Stack Software Engineer</title>
+<meta name="description" content="Syed Abdul Kareem — Full Stack Software Engineer. 3+ years building enterprise SaaS platforms with Angular, Node.js, MySQL & Generative AI. CRM, Quote-to-Cash, multi-tenant architecture on Docker, Jenkins & AWS.">
+<meta name="author" content="Syed Abdul Kareem">
+<meta property="og:title" content="Syed Abdul Kareem — Full Stack Software Engineer">
+<meta property="og:description" content="An interactive 3D portfolio with a 'Laws of the Universe' physics playground. Angular · Node.js · AWS · Generative AI · SaaS · CRM & Q2C.">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0a0a0f">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Animation engine — exactly the libraries the design prototype was tuned against -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.1.13/dist/lenis.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+
+<link rel="stylesheet" href="./assets/css/styles.css">
+</head>
+<body>
+
+<!-- Animated gradient fallback (also the base backdrop behind the WebGL canvas) -->
+<div id="gl-fallback" style="position:fixed;inset:0;z-index:0;overflow:hidden;background:radial-gradient(120% 120% at 50% -10%, #14111f 0%, #0a0a0f 58%);">
+  <div style="position:absolute;width:62vw;height:62vw;left:-12vw;top:-14vw;border-radius:50%;background:radial-gradient(circle, rgba(139,92,246,0.55), transparent 60%);filter:blur(70px);animation:blob 19s ease-in-out infinite;"></div>
+  <div style="position:absolute;width:52vw;height:52vw;right:-10vw;top:24vh;border-radius:50%;background:radial-gradient(circle, rgba(34,211,238,0.42), transparent 62%);filter:blur(80px);animation:blob 24s ease-in-out infinite reverse;"></div>
+</div>
+<div id="gl-mount" style="position:fixed;inset:0;z-index:0;pointer-events:none;"></div>
+
+<div id="vignette" style="position:fixed;inset:0;z-index:60;pointer-events:none;background:radial-gradient(125% 100% at 50% 38%, transparent 48%, rgba(0,0,0,0.6) 100%);"></div>
+<div id="grain" style="position:fixed;inset:-60px;z-index:62;pointer-events:none;opacity:0.06;mix-blend-mode:overlay;background-repeat:repeat;animation:grain 8s steps(10) infinite;"></div>
+
+<!-- =====================  UNIVERSE ROOT (everything the black hole can swallow)  ===================== -->
+<div id="universe-root">
+
+<nav id="nav" style="position:fixed;top:0;left:0;width:100%;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:22px clamp(20px,5vw,56px);">
+  <a href="#home" data-target="home" data-magnetic="0.2" style="display:inline-flex;align-items:center;gap:12px;">
+    <span style="width:38px;height:38px;border-radius:11px;background:var(--accent-grad);display:grid;place-items:center;box-shadow:0 6px 22px rgba(139,92,246,0.45);font-family:'Clash Display',sans-serif;font-weight:700;font-size:17px;color:#0a0a0f;transition:transform .35s cubic-bezier(.2,.8,.2,1);" style-hover="transform:rotate(-8deg) scale(1.06)">SA</span>
+    <span style="display:flex;flex-direction:column;line-height:1.1;">
+      <span style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.01em;">Syed Abdul Kareem</span>
+      <span id="nav-role" style="font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--muted);">Full Stack Engineer</span>
+    </span>
+  </a>
+  <div id="nav-links" style="display:flex;align-items:center;gap:30px;">
+    <a href="#about" data-target="about" style="font-size:14px;color:#c9ccd8;transition:color .25s;" style-hover="color:#fff">About</a>
+    <a href="#skills" data-target="skills" style="font-size:14px;color:#c9ccd8;transition:color .25s;" style-hover="color:#fff">Skills</a>
+    <a href="#experience" data-target="experience" style="font-size:14px;color:#c9ccd8;transition:color .25s;" style-hover="color:#fff">Experience</a>
+    <a href="#projects" data-target="projects" style="font-size:14px;color:#c9ccd8;transition:color .25s;" style-hover="color:#fff">Projects</a>
+    <a href="#contact" data-target="contact" data-magnetic="0.4" style="font-size:14px;font-weight:600;color:#0a0a0f;background:var(--accent-grad);padding:10px 18px;border-radius:999px;box-shadow:0 6px 22px rgba(139,92,246,0.32);">Get in touch</a>
+  </div>
+  <button id="nav-burger" aria-label="Open menu" style="display:none;flex-direction:column;gap:5px;background:transparent;border:0;padding:8px;cursor:pointer;">
+    <span style="display:block;width:24px;height:2px;background:#ECEDF2;"></span>
+    <span style="display:block;width:24px;height:2px;background:#ECEDF2;"></span>
+  </button>
+</nav>
+
+<div id="mobile-menu" style="position:fixed;inset:0;z-index:80;background:rgba(8,8,12,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;align-items:center;justify-content:center;transition:opacity .5s ease, transform .6s cubic-bezier(.2,.9,.2,1);opacity:0;transform:translateY(-26px);pointer-events:none;">
+  <button id="mobile-close" aria-label="Close menu" style="position:absolute;top:26px;right:26px;background:transparent;border:0;color:#ECEDF2;font-size:30px;line-height:1;cursor:pointer;">✕</button>
+  <div style="display:flex;flex-direction:column;gap:14px;text-align:center;font-family:'Clash Display',sans-serif;">
+    <a href="#about" data-target="about" style="font-size:34px;font-weight:600;color:#ECEDF2;">About</a>
+    <a href="#skills" data-target="skills" style="font-size:34px;font-weight:600;color:#ECEDF2;">Skills</a>
+    <a href="#experience" data-target="experience" style="font-size:34px;font-weight:600;color:#ECEDF2;">Experience</a>
+    <a href="#projects" data-target="projects" style="font-size:34px;font-weight:600;color:#ECEDF2;">Projects</a>
+    <a href="#contact" data-target="contact" style="font-size:34px;font-weight:600;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;">Get in touch</a>
+  </div>
+</div>
+
+<div id="content" style="position:relative;z-index:2;">
+
+  <!-- ===================== HERO ===================== -->
+  <section id="home" data-screen-label="Hero" style="position:relative;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:120px clamp(20px,6vw,80px) 90px;">
+    <div style="position:absolute;inset:0;z-index:1;pointer-events:none;background:radial-gradient(58% 44% at 50% 46%, rgba(8,8,12,0.6) 0%, rgba(8,8,12,0.24) 46%, transparent 72%);"></div>
+    <div style="position:relative;z-index:2;max-width:1120px;display:flex;flex-direction:column;align-items:center;gap:26px;">
+      <div id="hero-kicker" style="display:inline-flex;align-items:center;gap:10px;padding:8px 16px;border:1px solid var(--line);border-radius:999px;background:rgba(10,10,18,0.5);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#c9ccd8;">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 12px var(--accent-2);animation:pulseDot 2s ease-in-out infinite;"></span>Available for senior roles
+      </div>
+      <h1 id="hero-name" style="margin:0;font-family:'Clash Display',sans-serif;font-weight:600;line-height:0.9;letter-spacing:-0.025em;font-size:clamp(46px,11vw,170px);color:#fff;text-shadow:0 0 50px rgba(139,92,246,0.25);">
+        <span data-name-line style="display:block;overflow:hidden;padding:0.04em 0;">Syed Abdul</span>
+        <span data-name-line style="display:block;overflow:hidden;padding:0.04em 0;">Kareem</span>
+      </h1>
+      <p id="hero-tag" style="margin:0;font-size:clamp(15px,2vw,22px);font-weight:500;color:#cfd2de;max-width:780px;line-height:1.5;">Full Stack Software Engineer <span style="color:var(--accent-2);padding:0 4px;">/</span> MEAN · AWS · Jenkins · Generative AI · SaaS · CRM &amp; Q2C</p>
+      <p id="hero-sub" style="margin:0;font-size:clamp(14px,1.4vw,17px);color:var(--muted);max-width:600px;line-height:1.65;">3+ years building enterprise SaaS platforms with Angular, Node.js, MySQL &amp; Generative AI.</p>
+      <div id="hero-cta" style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:10px;">
+        <a href="#projects" data-target="projects" data-magnetic="0.45" style="display:inline-flex;align-items:center;gap:10px;padding:15px 28px;border-radius:999px;background:var(--accent-grad);color:#0a0a0f;font-weight:600;font-size:15px;box-shadow:0 10px 34px rgba(139,92,246,0.36);" style-hover="box-shadow:0 14px 44px rgba(34,211,238,0.45)">View Projects <span style="font-size:17px;">→</span></a>
+        <a href="#contact" data-target="contact" data-magnetic="0.45" style="display:inline-flex;align-items:center;padding:15px 28px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.03);color:#ECEDF2;font-weight:500;font-size:15px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);" style-hover="border-color:rgba(255,255,255,0.3)">Get in touch</a>
+      </div>
+      <div id="hero-chips" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:4px;max-width:560px;">
+        <span data-phys-chip style="padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);font-size:13px;color:#c9ccd8;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">Angular</span>
+        <span data-phys-chip style="padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);font-size:13px;color:#c9ccd8;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">Node.js</span>
+        <span data-phys-chip style="padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);font-size:13px;color:#c9ccd8;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">AWS</span>
+        <span data-phys-chip style="padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);font-size:13px;color:#c9ccd8;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">Generative AI</span>
+        <span data-phys-chip style="padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);font-size:13px;color:#c9ccd8;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">Docker</span>
+        <span data-phys-chip style="padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.05);font-size:13px;color:#c9ccd8;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">RxJS</span>
+      </div>
+    </div>
+    <div id="hero-badge" style="position:absolute;right:clamp(20px,6vw,72px);bottom:54px;width:120px;height:120px;z-index:3;display:grid;place-items:center;pointer-events:none;">
+      <svg viewBox="0 0 120 120" style="position:absolute;inset:0;width:100%;height:100%;animation:spin 18s linear infinite;">
+        <defs><path id="badgeArc" d="M60,60 m-45,0 a45,45 0 1,1 90,0 a45,45 0 1,1 -90,0"></path></defs>
+        <text fill="#c9ccd8" style="font-size:10px;letter-spacing:3px;font-weight:600;text-transform:uppercase;font-family:'Space Grotesk',sans-serif;"><textPath href="#badgeArc" startOffset="0">✦ open to work ✦ portfolio 2025 </textPath></text>
+      </svg>
+      <span style="font-family:'Clash Display',sans-serif;font-weight:700;font-size:20px;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;">✦</span>
+    </div>
+    <div id="scroll-ind" style="position:absolute;bottom:32px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--muted);z-index:2;">
+      <span style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;">Scroll</span>
+      <span style="position:relative;width:24px;height:38px;border:1.5px solid var(--line);border-radius:14px;display:block;">
+        <span style="position:absolute;left:50%;top:7px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--accent-2);animation:scrollDot 1.8s ease-in-out infinite;"></span>
+      </span>
+    </div>
+  </section>
+
+  <!-- ===================== TICKER ===================== -->
+  <div data-screen-label="Ticker" style="position:relative;z-index:2;padding:26px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow:hidden;background:rgba(10,10,18,0.45);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);">
+    <div id="ticker-track" style="display:flex;width:max-content;animation:marquee 30s linear infinite;will-change:transform;">
+      <div style="display:flex;align-items:center;gap:32px;padding-right:32px;font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(30px,4.4vw,58px);white-space:nowrap;"><span>FULL-STACK ENGINEER</span><span style="color:var(--accent-2);">✦</span><span style="-webkit-text-stroke:1.2px rgba(255,255,255,0.5);color:transparent;">ANGULAR</span><span style="color:var(--accent);">✦</span><span>NODE.JS</span><span style="color:var(--accent-2);">✦</span><span style="-webkit-text-stroke:1.2px rgba(255,255,255,0.5);color:transparent;">AWS</span><span style="color:var(--accent);">✦</span><span>GENERATIVE AI</span><span style="color:var(--accent-2);">✦</span><span style="-webkit-text-stroke:1.2px rgba(255,255,255,0.5);color:transparent;">SAAS</span><span style="color:var(--accent);">✦</span><span>CRM &amp; Q2C</span><span style="color:var(--accent-2);">✦</span></div>
+      <div style="display:flex;align-items:center;gap:32px;padding-right:32px;font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(30px,4.4vw,58px);white-space:nowrap;"><span>FULL-STACK ENGINEER</span><span style="color:var(--accent-2);">✦</span><span style="-webkit-text-stroke:1.2px rgba(255,255,255,0.5);color:transparent;">ANGULAR</span><span style="color:var(--accent);">✦</span><span>NODE.JS</span><span style="color:var(--accent-2);">✦</span><span style="-webkit-text-stroke:1.2px rgba(255,255,255,0.5);color:transparent;">AWS</span><span style="color:var(--accent);">✦</span><span>GENERATIVE AI</span><span style="color:var(--accent-2);">✦</span><span style="-webkit-text-stroke:1.2px rgba(255,255,255,0.5);color:transparent;">SAAS</span><span style="color:var(--accent);">✦</span><span>CRM &amp; Q2C</span><span style="color:var(--accent-2);">✦</span></div>
+    </div>
+  </div>
+
+  <!-- ===================== ABOUT ===================== -->
+  <section id="about" data-screen-label="About" style="position:relative;min-height:100vh;display:flex;align-items:center;padding:140px clamp(20px,6vw,80px);">
+    <div id="about-grid" style="position:relative;z-index:2;width:100%;max-width:1200px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,0.92fr);gap:60px;align-items:center;">
+      <div>
+        <div data-reveal style="display:inline-block;font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent-2);margin-bottom:22px;">01 — About</div>
+        <h2 data-reveal style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(30px,4.4vw,56px);line-height:1.04;letter-spacing:-0.02em;margin:0 0 26px;">Engineering enterprise SaaS that scales.</h2>
+        <p data-reveal style="font-size:clamp(15px,1.5vw,18px);line-height:1.78;color:#b9bcc8;max-width:620px;margin:0;">Full Stack Developer with 3+ years of experience developing and optimizing enterprise SaaS platforms using Angular, Node.js, MySQL, and Generative AI. Proven track record of designing scalable architectures, automating workflows, and integrating AI-driven systems with REST APIs and WebSocket services. Experienced in leading CRM revamps, Quote Management systems, and multi-tenant infrastructure on Docker, Jenkins, and AWS.</p>
+        <div data-reveal style="display:flex;gap:44px;margin-top:42px;flex-wrap:wrap;">
+          <div><div style="font-family:'Clash Display',sans-serif;font-size:38px;font-weight:600;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;line-height:1;">3+</div><div style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-top:8px;">Years Experience</div></div>
+          <div><div style="font-family:'Clash Display',sans-serif;font-size:38px;font-weight:600;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;line-height:1;">~30</div><div style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-top:8px;">CRM Sprints</div></div>
+          <div><div style="font-family:'Clash Display',sans-serif;font-size:38px;font-weight:600;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;line-height:1;">4+</div><div style="font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-top:8px;">Go-lives</div></div>
+        </div>
+      </div>
+      <!-- floating glass profile card fills the right column the prototype left as a spacer -->
+      <div id="about-card" data-reveal style="position:relative;min-height:380px;display:flex;align-items:center;justify-content:center;">
+        <div data-tilt style="position:relative;width:min(420px,100%);border-radius:24px;border:1px solid var(--line);background:linear-gradient(160deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:30px;box-shadow:0 30px 80px rgba(0,0,0,0.45);overflow:hidden;">
+          <div style="position:absolute;inset:0;background:radial-gradient(120% 80% at 80% 0%, rgba(139,92,246,0.22), transparent 60%);pointer-events:none;"></div>
+          <div style="position:relative;display:flex;align-items:center;gap:16px;">
+            <span style="width:58px;height:58px;border-radius:16px;background:var(--accent-grad);display:grid;place-items:center;font-family:'Clash Display',sans-serif;font-weight:700;font-size:24px;color:#0a0a0f;box-shadow:0 8px 24px rgba(139,92,246,0.5);">SA</span>
+            <div>
+              <div style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:18px;">Syed Abdul Kareem</div>
+              <div style="font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:var(--muted);margin-top:4px;">Hyderabad, India</div>
+            </div>
+          </div>
+          <div style="position:relative;height:1px;background:var(--line);margin:24px 0;"></div>
+          <div style="position:relative;display:flex;flex-direction:column;gap:14px;">
+            <div style="display:flex;justify-content:space-between;font-size:14px;color:#b9bcc8;"><span style="color:var(--muted-2);">Focus</span><span>Enterprise SaaS · CRM · Q2C</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:14px;color:#b9bcc8;"><span style="color:var(--muted-2);">Stack</span><span>Angular · Node.js · AWS</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:14px;color:#b9bcc8;"><span style="color:var(--muted-2);">Edge</span><span>Generative AI · Automation</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:14px;color:#b9bcc8;"><span style="color:var(--muted-2);">Status</span><span style="color:var(--accent-2);">Open to senior roles</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== SKILLS ===================== -->
+  <section id="skills" data-screen-label="Skills" style="position:relative;min-height:85vh;display:flex;align-items:center;padding:120px clamp(20px,6vw,80px);">
+    <div style="position:relative;z-index:2;max-width:1100px;margin:0 auto;width:100%;">
+      <div data-reveal style="font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent-2);margin-bottom:22px;">02 — Skills</div>
+      <h2 data-reveal style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(30px,4.8vw,62px);line-height:1.02;letter-spacing:-0.02em;margin:0 0 24px;max-width:880px;">An interactive constellation of the stack I build with.</h2>
+      <p data-reveal style="font-size:clamp(15px,1.5vw,18px);line-height:1.7;color:#9fa2af;max-width:620px;margin:0 0 12px;">Frontend · Backend · Databases · DevOps · AI &amp; Automation · SaaS architecture — hover any orbit to bring it forward.</p>
+      <div id="skills-mount" style="margin-top:46px;"></div>
+    </div>
+  </section>
+
+  <!-- ===================== EXPERIENCE ===================== -->
+  <section id="experience" data-screen-label="Experience" style="position:relative;min-height:85vh;display:flex;align-items:center;padding:120px clamp(20px,6vw,80px);">
+    <div style="position:relative;z-index:2;max-width:1000px;margin:0 auto;width:100%;">
+      <div data-reveal style="font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent-2);margin-bottom:22px;">03 — Experience</div>
+      <h2 data-reveal style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(30px,4.8vw,62px);line-height:1.02;letter-spacing:-0.02em;margin:0 0 24px;max-width:880px;">A pinned timeline of where I've shipped.</h2>
+      <p data-reveal style="font-size:clamp(15px,1.5vw,18px);line-height:1.7;color:#9fa2af;max-width:600px;margin:0 0 12px;">KEBS · Ericsson · Puducherry Technological University — each entry sliding into view on scroll.</p>
+      <div id="experience-mount" style="margin-top:50px;"></div>
+    </div>
+  </section>
+
+  <!-- ===================== PROJECTS ===================== -->
+  <section id="projects" data-screen-label="Projects" style="position:relative;min-height:85vh;display:flex;align-items:center;padding:120px clamp(20px,6vw,80px);">
+    <div style="position:relative;z-index:2;max-width:1180px;margin:0 auto;width:100%;">
+      <div data-reveal style="font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent-2);margin-bottom:22px;">04 — Projects</div>
+      <h2 data-reveal style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(30px,4.8vw,62px);line-height:1.02;letter-spacing:-0.02em;margin:0 0 24px;max-width:880px;">Six builds, rendered as 3D-tilt glass cards.</h2>
+      <p data-reveal style="font-size:clamp(15px,1.5vw,18px);line-height:1.7;color:#9fa2af;max-width:640px;margin:0 0 12px;">Enterprise CRM &amp; Q2C work alongside live SaaS products — each card tilts to your cursor and links straight to the source or a live demo.</p>
+      <div id="projects-mount" style="margin-top:50px;"></div>
+    </div>
+  </section>
+
+  <!-- ===================== ACHIEVEMENTS ===================== -->
+  <section id="achievements" data-screen-label="Achievements" style="position:relative;min-height:70vh;display:flex;align-items:center;padding:120px clamp(20px,6vw,80px);">
+    <div style="position:relative;z-index:2;max-width:1100px;margin:0 auto;width:100%;">
+      <div data-reveal style="font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent-2);margin-bottom:22px;">05 — Achievements</div>
+      <h2 data-reveal style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(30px,4.8vw,62px);line-height:1.02;letter-spacing:-0.02em;margin:0 0 24px;max-width:880px;">Counters that climb as you arrive.</h2>
+      <div id="achievements-mount" style="margin-top:46px;"></div>
+    </div>
+  </section>
+
+  <!-- ===================== TICKER 2 ===================== -->
+  <div data-screen-label="Ticker2" style="position:relative;z-index:2;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow:hidden;">
+    <div id="ticker-track2" style="display:flex;width:max-content;animation:marqueeR 24s linear infinite;will-change:transform;">
+      <div style="display:flex;align-items:center;gap:26px;padding-right:26px;font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(18px,2.4vw,32px);white-space:nowrap;color:#c9ccd8;"><span>LET'S WORK TOGETHER</span><span style="color:var(--accent-2);">✦</span><span>OPEN TO SENIOR ROLES</span><span style="color:var(--accent);">✦</span><span>HYDERABAD, INDIA</span><span style="color:var(--accent-2);">✦</span><span>AVAILABLE 2025</span><span style="color:var(--accent);">✦</span></div>
+      <div style="display:flex;align-items:center;gap:26px;padding-right:26px;font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(18px,2.4vw,32px);white-space:nowrap;color:#c9ccd8;"><span>LET'S WORK TOGETHER</span><span style="color:var(--accent-2);">✦</span><span>OPEN TO SENIOR ROLES</span><span style="color:var(--accent);">✦</span><span>HYDERABAD, INDIA</span><span style="color:var(--accent-2);">✦</span><span>AVAILABLE 2025</span><span style="color:var(--accent);">✦</span></div>
+    </div>
+  </div>
+
+  <!-- ===================== CONTACT ===================== -->
+  <section id="contact" data-screen-label="Contact" style="position:relative;min-height:90vh;display:flex;align-items:center;padding:130px clamp(20px,6vw,80px) 90px;">
+    <div style="position:relative;z-index:2;max-width:1100px;margin:0 auto;width:100%;">
+      <div data-reveal style="font-size:12px;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent-2);margin-bottom:22px;">06 — Contact</div>
+      <h2 data-reveal style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:clamp(34px,6vw,80px);line-height:1.0;letter-spacing:-0.025em;margin:0 0 30px;max-width:900px;">Let's build something exceptional.</h2>
+
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:start;" id="contact-grid">
+        <div>
+          <a data-reveal href="mailto:syedazeeem.13@gmail.com" data-magnetic="0.3" style="display:inline-block;font-family:'Clash Display',sans-serif;font-size:clamp(20px,3vw,34px);font-weight:500;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;margin-bottom:30px;">syedazeeem.13@gmail.com</a>
+          <div data-reveal style="display:flex;gap:40px;flex-wrap:wrap;color:#b9bcc8;font-size:15px;margin-bottom:30px;">
+            <div><div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted-2);margin-bottom:6px;">Phone</div>+91 93912 45975</div>
+            <div><div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--muted-2);margin-bottom:6px;">Location</div>Hyderabad, India</div>
+          </div>
+          <div data-reveal style="display:flex;gap:14px;flex-wrap:wrap;">
+            <a href="https://www.linkedin.com/in/syed-abdul-kareem-b33519200/" target="_blank" rel="noopener" data-magnetic="0.3" style="display:inline-flex;align-items:center;gap:9px;padding:13px 22px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.03);color:#ECEDF2;font-size:14px;font-weight:500;" style-hover="border-color:rgba(255,255,255,0.3)">LinkedIn <span style="color:var(--accent-2);">↗</span></a>
+            <a href="https://github.com/SyedAbdulKareem13" target="_blank" rel="noopener" data-magnetic="0.3" style="display:inline-flex;align-items:center;gap:9px;padding:13px 22px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,0.03);color:#ECEDF2;font-size:14px;font-weight:500;" style-hover="border-color:rgba(255,255,255,0.3)">GitHub <span style="color:var(--accent-2);">↗</span></a>
+          </div>
+        </div>
+
+        <!-- frosted-glass contact form with animated focus states + magnetic submit -->
+        <form id="contact-form" data-reveal novalidate style="position:relative;border-radius:24px;border:1px solid var(--line);background:linear-gradient(160deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02));backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:28px;box-shadow:0 30px 80px rgba(0,0,0,0.4);display:flex;flex-direction:column;gap:18px;">
+          <div class="field">
+            <input id="cf-name" name="name" type="text" required autocomplete="name" placeholder=" ">
+            <label for="cf-name">Your name</label>
+            <span class="field-line"></span>
+          </div>
+          <div class="field">
+            <input id="cf-email" name="email" type="email" required autocomplete="email" placeholder=" ">
+            <label for="cf-email">Email address</label>
+            <span class="field-line"></span>
+          </div>
+          <div class="field">
+            <textarea id="cf-msg" name="message" rows="4" required placeholder=" "></textarea>
+            <label for="cf-msg">Tell me about the role or project</label>
+            <span class="field-line"></span>
+          </div>
+          <button type="submit" id="cf-submit" data-magnetic="0.35" style="align-self:flex-start;display:inline-flex;align-items:center;gap:10px;padding:14px 26px;border:0;border-radius:999px;background:var(--accent-grad);color:#0a0a0f;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:15px;cursor:pointer;box-shadow:0 10px 34px rgba(139,92,246,0.36);">Send message <span style="font-size:16px;">→</span></button>
+          <p id="cf-status" role="status" aria-live="polite" style="margin:0;font-size:13px;color:var(--muted);min-height:18px;"></p>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <footer style="position:relative;z-index:2;border-top:1px solid var(--line);padding:30px clamp(20px,6vw,80px);display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:13px;">
+    <span>© 2025 Syed Abdul Kareem</span>
+    <span style="letter-spacing:0.1em;">Built with three.js · GSAP · Lenis</span>
+    <a href="#home" data-target="home" data-magnetic="0.3" style="display:inline-flex;align-items:center;gap:8px;color:#ECEDF2;" style-hover="color:#fff">Back to top ↑</a>
+  </footer>
+
+</div><!-- /#content -->
+</div><!-- /#universe-root -->
+
+<!-- ===================== LAWS OF THE UNIVERSE HUD ===================== -->
+<button id="hud-launch" style="position:fixed;left:24px;bottom:24px;z-index:70;display:inline-flex;align-items:center;gap:9px;padding:12px 18px;border-radius:999px;border:1px solid var(--line);background:rgba(10,10,18,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:#ECEDF2;font-size:13px;font-weight:600;letter-spacing:0.02em;box-shadow:0 8px 30px rgba(0,0,0,0.4);cursor:pointer;" style-hover="border-color:var(--accent)"><span style="font-size:15px;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent;">✦</span>Laws of the Universe</button>
+
+<div id="law-bar" style="display:none;position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:71;align-items:center;gap:6px;padding:8px 10px;border-radius:18px;border:1px solid var(--line);background:rgba(12,12,18,0.82);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);box-shadow:0 24px 70px rgba(0,0,0,0.55);max-width:min(94vw,980px);overflow-x:auto;">
+  <div id="law-drag" title="Drag the bar" style="flex:none;display:flex;align-items:center;justify-content:center;width:20px;height:34px;color:var(--muted-2);cursor:grab;user-select:none;font-size:13px;letter-spacing:-2px;">⠿</div>
+  <button data-law-btn="earth" aria-label="Earth — normal gravity" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">🌍</span><span data-law-label>Earth</span></button>
+  <button data-law-btn="zerog" aria-label="Zero gravity" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">🌌</span><span data-law-label>Zero-G</span></button>
+  <button data-law-btn="mars" aria-label="Mars gravity" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">🔴</span><span data-law-label>Mars</span></button>
+  <button data-law-btn="moon" aria-label="Moon gravity" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">🌕</span><span data-law-label>Moon</span></button>
+  <button data-law-btn="jupiter" aria-label="Jupiter gravity" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">🪐</span><span data-law-label>Jupiter</span></button>
+  <span style="flex:none;width:1px;height:24px;background:var(--line);margin:0 2px;"></span>
+  <button data-law-btn="slowmo" aria-label="Slow motion time dilation" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">⏳</span><span data-law-label>Slow-Mo</span></button>
+  <button data-law-btn="blackhole" aria-label="Black hole singularity — tap again to swallow the universe" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">⚫</span><span data-law-label data-bh-label>Black Hole</span></button>
+  <button data-law-btn="time" aria-label="Time — freeze, rewind, fast-forward" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">🕰️</span><span data-law-label data-time-label>Time</span></button>
+  <button data-law-btn="bigbang" aria-label="Big Bang explosion" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 13px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font-size:13px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;transition:background .25s,border-color .25s,color .25s;" style-hover="border-color:var(--accent);color:#fff" style-focus="outline:2px solid var(--accent-2);outline-offset:2px"><span style="font-size:15px;line-height:1;">💥</span><span data-law-label>Big Bang</span></button>
+  <span style="flex:none;width:1px;height:24px;background:var(--line);margin:0 2px;"></span>
+  <button data-law-btn="reset" aria-label="Reset universe" style="position:relative;overflow:hidden;flex:none;display:inline-flex;align-items:center;gap:7px;padding:9px 14px;border-radius:12px;border:0;background:linear-gradient(120deg,#A78BFA,#22D3EE);color:#0a0a0f;font-size:13px;font-weight:700;font-family:'Space Grotesk',sans-serif;cursor:pointer;white-space:nowrap;" style-focus="outline:2px solid #fff;outline-offset:2px"><span style="font-size:15px;line-height:1;">♻️</span><span data-law-label>Reset</span></button>
+  <button id="law-close" aria-label="Close physics lab" style="flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:34px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:15px;cursor:pointer;" style-hover="color:#fff;border-color:var(--accent)" style-focus="outline:2px solid var(--accent-2);outline-offset:2px">✕</button>
+</div>
+<div id="law-toast" role="status" aria-live="polite" style="position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:71;padding:8px 16px;border-radius:999px;border:1px solid var(--line);background:rgba(12,12,18,0.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);font-size:12px;font-weight:500;letter-spacing:0.06em;color:#ECEDF2;opacity:0;pointer-events:none;white-space:nowrap;box-shadow:0 10px 30px rgba(0,0,0,0.4);"></div>
+
+<!-- ===================== BLACK-HOLE SWALLOW OVERLAYS ===================== -->
+<!-- iris mask + swirl that close over the whole site during the collapse -->
+<div id="swallow-fx" style="position:fixed;inset:0;z-index:8800;pointer-events:none;opacity:0;">
+  <div id="swallow-swirl" style="position:absolute;inset:-20%;background:conic-gradient(from 0deg, rgba(34,211,238,0.0), rgba(139,92,246,0.18), rgba(34,211,238,0.0), rgba(167,139,250,0.16), rgba(34,211,238,0.0));mix-blend-mode:screen;"></div>
+  <div id="swallow-iris" style="position:absolute;inset:0;background:#000;-webkit-mask:radial-gradient(circle at 50% 50%, transparent var(--iris,140%), #000 calc(var(--iris,140%) + 0.5%));mask:radial-gradient(circle at 50% 50%, transparent var(--iris,140%), #000 calc(var(--iris,140%) + 0.5%));"></div>
+  <div id="swallow-ring" style="position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;box-shadow:0 0 0 0 rgba(255,255,255,0.0);opacity:0;"></div>
+</div>
+
+<!-- THE END film card + REVIVE -->
+<div id="the-end" role="dialog" aria-modal="true" aria-label="The end of the universe" style="position:fixed;inset:0;z-index:8900;display:none;flex-direction:column;align-items:center;justify-content:center;gap:30px;background:#000;">
+  <div id="the-end-grain" style="position:absolute;inset:-60px;pointer-events:none;opacity:0.07;mix-blend-mode:overlay;background-repeat:repeat;"></div>
+  <div id="the-end-title" style="position:relative;font-family:'Clash Display',serif;font-weight:700;font-size:clamp(46px,11vw,150px);letter-spacing:0.08em;color:#f4f1ea;text-shadow:0 0 60px rgba(255,255,255,0.12);opacity:0;">THE END</div>
+  <button id="revive-btn" aria-label="Revive the universe" style="position:relative;display:none;align-items:center;gap:10px;padding:15px 32px;border-radius:999px;border:1px solid rgba(255,255,255,0.5);background:rgba(255,255,255,0.04);color:#f4f1ea;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.04em;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);"><span style="font-size:14px;">▶</span> REVIVE</button>
+  <div id="the-end-hint" style="position:relative;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:rgba(244,241,234,0.4);opacity:0;">press revive or esc to restore</div>
+</div>
+
+<!-- ===================== CUSTOM CURSOR ===================== -->
+<div id="cursor-dot" style="display:none;position:fixed;top:0;left:0;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--accent);pointer-events:none;z-index:10000;mix-blend-mode:difference;"></div>
+<div id="cursor-ring" style="display:none;position:fixed;top:0;left:0;pointer-events:none;z-index:10000;mix-blend-mode:difference;">
+  <div id="cursor-ring-i" style="width:34px;height:34px;margin:-17px 0 0 -17px;border:1.5px solid rgba(255,255,255,0.6);border-radius:50%;transition:transform .25s cubic-bezier(.2,.8,.2,1),border-color .25s,background .25s;"></div>
+</div>
+
+<!-- ===================== PRELOADER ===================== -->
+<div id="preloader" style="position:fixed;inset:0;z-index:9000;">
+  <div id="pre-top" style="position:absolute;top:0;left:0;width:100%;height:50%;background:#0a0a0f;"></div>
+  <div id="pre-bottom" style="position:absolute;bottom:0;left:0;width:100%;height:50%;background:#0a0a0f;"></div>
+  <div id="pre-center" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;">
+    <div style="font-family:'Clash Display',sans-serif;font-size:clamp(64px,16vw,180px);font-weight:600;line-height:1;letter-spacing:-0.02em;color:#fff;display:flex;align-items:baseline;gap:4px;">
+      <span id="pre-count">00</span><span style="font-size:0.3em;color:var(--accent-2);">%</span>
+    </div>
+    <div style="width:min(280px,60vw);height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
+      <div id="pre-bar" style="height:100%;width:100%;transform:scaleX(0);transform-origin:left;background:var(--accent-grad);"></div>
+    </div>
+    <div style="font-size:11px;letter-spacing:0.34em;text-transform:uppercase;color:var(--muted);">Loading Experience</div>
+  </div>
+</div>
+
+<script src="./assets/js/data.js"></script>
+<script src="./assets/js/app.js"></script>
+</body>
+</html>
