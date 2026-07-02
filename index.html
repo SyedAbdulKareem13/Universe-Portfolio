@@ -10,8 +10,8 @@
 <meta property="og:description" content="An interactive 3D portfolio with a 'Laws of the Universe' physics playground. Angular · Node.js · AWS · Generative AI · SaaS · CRM & Q2C.">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0a0a0f">
-<link rel="icon" type="image/svg+xml" href="./assets/earth.svg?v=9">
-<link rel="apple-touch-icon" href="./assets/earth.svg?v=9">
+<link rel="icon" type="image/svg+xml" href="./assets/earth.svg?v=14">
+<link rel="apple-touch-icon" href="./assets/earth.svg?v=14">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,7 +27,7 @@
   }
 }
 </script>
-<script type="module" src="./assets/js/gfx.js?v=9"></script>
+<script type="module" src="./assets/js/gfx.js?v=14"></script>
 
 <!-- animation libs (UMD globals): GSAP + ScrollTrigger, Lenis smooth scroll, Matter.js physics -->
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
@@ -35,7 +35,7 @@
 <script src="https://cdn.jsdelivr.net/npm/lenis@1.1.13/dist/lenis.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
 
-<link rel="stylesheet" href="./assets/css/styles.css?v=9">
+<link rel="stylesheet" href="./assets/css/styles.css?v=14">
 </head>
 <body>
 
@@ -54,7 +54,7 @@
 
 <nav id="nav" style="position:fixed;top:0;left:0;width:100%;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:22px clamp(20px,5vw,56px);">
   <a href="#home" data-target="home" data-magnetic="0.2" style="display:inline-flex;align-items:center;gap:12px;">
-    <img src="./assets/earth.svg?v=9" alt="Earth" width="38" height="38" style="display:block;width:38px;height:38px;border-radius:50%;box-shadow:0 6px 22px rgba(34,150,243,0.5), 0 0 0 1px rgba(140,210,255,0.25);transition:transform .6s cubic-bezier(.2,.8,.2,1);" style-hover="transform:rotate(-18deg) scale(1.06)">
+    <img src="./assets/earth.svg?v=14" alt="Earth" width="38" height="38" style="display:block;width:38px;height:38px;border-radius:50%;box-shadow:0 6px 22px rgba(34,150,243,0.5), 0 0 0 1px rgba(140,210,255,0.25);transition:transform .6s cubic-bezier(.2,.8,.2,1);" style-hover="transform:rotate(-18deg) scale(1.06)">
     <span style="display:flex;flex-direction:column;line-height:1.1;">
       <span style="font-family:'Clash Display',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.01em;">Syed Abdul Kareem</span>
       <span id="nav-role" style="font-size:10px;letter-spacing:0.24em;text-transform:uppercase;color:var(--muted);">From Earth</span>
@@ -310,6 +310,9 @@
 </div>
 <!-- foreground layer where asteroids visibly streak in and slam into the page -->
 <div id="apoc-front" style="position:fixed;inset:0;z-index:8620;pointer-events:none;overflow:hidden;"></div>
+
+<!-- time-travel transmission overlay (scanlines, on top during an era warp) -->
+<div id="warp-fx" style="position:fixed;inset:0;z-index:8700;pointer-events:none;opacity:0;background:repeating-linear-gradient(0deg, rgba(150,210,255,0.06) 0px, rgba(150,210,255,0.06) 1px, transparent 2px, transparent 4px);mix-blend-mode:screen;"></div>
 <div id="impact-card" role="dialog" aria-modal="true" aria-label="Impact" style="position:fixed;inset:0;z-index:8650;display:none;flex-direction:column;align-items:center;justify-content:center;gap:26px;background:transparent;">
   <div id="impact-title" style="position:relative;font-family:'Clash Display',serif;font-weight:700;font-size:clamp(44px,10vw,130px);letter-spacing:0.06em;color:#ffb27a;text-shadow:0 0 60px rgba(255,90,30,0.45);opacity:0;">IMPACT</div>
   <button id="rebuild-btn" aria-label="Rebuild the site" style="position:relative;display:none;align-items:center;gap:10px;padding:15px 32px;border-radius:999px;border:1px solid rgba(255,140,90,0.6);background:rgba(255,90,40,0.08);color:#ffd9c4;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:0.04em;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);"><span style="font-size:15px;">⟲</span> REBUILD</button>
@@ -344,7 +347,7 @@
   </div>
 </div>
 
-<script src="./assets/js/data.js?v=9"></script>
-<script src="./assets/js/app.js?v=9"></script>
+<script src="./assets/js/data.js?v=14"></script>
+<script src="./assets/js/app.js?v=14"></script>
 </body>
 </html>

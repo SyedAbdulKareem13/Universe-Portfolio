@@ -10,6 +10,9 @@
   --line:rgba(255,255,255,0.09); --glass:rgba(255,255,255,0.04);
   --accent:#8B5CF6; --accent-2:#22D3EE;
   --accent-grad:linear-gradient(120deg,#A78BFA 0%,#8B5CF6 38%,#22D3EE 100%);
+  /* single motion language for the whole site */
+  --ease-smooth:cubic-bezier(.2,.8,.2,1);
+  --dur-fast:.3s; --dur-med:.45s; --dur-slow:.8s;
 }
 *{box-sizing:border-box;}
 html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
@@ -46,13 +49,20 @@ a{text-decoration:none;color:inherit;}
 }
 @media (min-width:861px){#nav-burger{display:none!important;}}
 
+/* Time-travel dial: collapse to emoji-only on small screens */
+@media (max-width:900px){ #time-dial .td-label{display:none!important;} #time-dial button{padding:9px!important;} }
+#time-dial button:hover{border-color:var(--accent)!important;color:#fff!important;}
+#time-dial button:focus-visible{border-color:var(--accent)!important;color:#fff!important;outline:2px solid var(--accent-2);outline-offset:2px;}
+/* short landscape viewports: move the gfx toggle to the top so its panel can't cover the dial */
+@media (max-height:600px){ #gfx-toggle{bottom:auto!important;top:14px!important;} #time-dial{gap:5px!important;} }
+
 /* =====================  SKILLS  ===================== */
 #skills-mount{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;}
 .skill-group{
   position:relative;border-radius:20px;border:1px solid var(--line);
   background:linear-gradient(160deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015));
   padding:24px;overflow:hidden;
-  transition:transform .45s cubic-bezier(.2,.8,.2,1),border-color .35s,box-shadow .45s;
+  transition:transform var(--dur-med) var(--ease-smooth),border-color var(--dur-fast),box-shadow var(--dur-med);
 }
 .skill-group::before{
   content:"";position:absolute;inset:0;opacity:0;transition:opacity .45s;pointer-events:none;
@@ -139,13 +149,13 @@ a{text-decoration:none;color:inherit;}
 .field input:focus,.field textarea:focus{outline:none;border-color:rgba(139,92,246,0.55);background:rgba(139,92,246,0.06);}
 .field label{
   position:absolute;left:14px;top:15px;font-size:15px;color:var(--muted);pointer-events:none;
-  transition:transform .25s cubic-bezier(.2,.8,.2,1),color .25s,font-size .25s;transform-origin:left top;
+  transition:transform .25s var(--ease-smooth),color .25s,font-size .25s;transform-origin:left top;
 }
 .field input:focus+label,.field input:not(:placeholder-shown)+label,
 .field textarea:focus+label,.field textarea:not(:placeholder-shown)+label{
   transform:translateY(-9px) scale(0.74);color:var(--accent-2);
 }
-.field-line{position:absolute;left:0;bottom:0;height:2px;width:100%;background:var(--accent-grad);transform:scaleX(0);transform-origin:left;transition:transform .4s cubic-bezier(.2,.8,.2,1);border-radius:2px;}
+.field-line{position:absolute;left:0;bottom:0;height:2px;width:100%;background:var(--accent-grad);transform:scaleX(0);transform-origin:left;transition:transform .4s var(--ease-smooth);border-radius:2px;}
 .field input:focus~.field-line,.field textarea:focus~.field-line{transform:scaleX(1);}
 
 /* =====================  REDUCED MOTION  =====================

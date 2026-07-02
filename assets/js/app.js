@@ -23,7 +23,16 @@ class Portfolio {
   init() {
     if (this._init) return; this._init = true;
     const mm = (q) => { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
-    this.prefersReduced = mm('(prefers-reduced-motion: reduce)');
+    // Motion policy: the animations ARE this site's product, so we default to FULL
+    // motion even when the OS reports prefers-reduced-motion (Windows "animation
+    // effects off" was silently freezing the ticker, skipping the Apocalypse
+    // asteroids and disabling smooth scroll for some visitors). An explicit,
+    // persisted "Motion" toggle in the ✦ panel is the accessible opt-out, and the
+    // photosensitivity guards (no strobe, spaced luminance-limited flashes) stay
+    // on regardless of this setting.
+    this.osPrefersReduced = mm('(prefers-reduced-motion: reduce)');
+    let motionPref = null; try { motionPref = localStorage.getItem('uv-motion'); } catch (e) {}
+    this.prefersReduced = motionPref ? (motionPref === 'reduced') : false;
     this.isTouch = mm('(hover: none), (pointer: coarse)');
     this.isSmall = window.innerWidth < 768;
     this.use3D = !this.isSmall && this.hasWebGL();
@@ -315,6 +324,7 @@ class Portfolio {
   routeLaw(law, btn) {
     if (!this.engine) return;
     if (this.worldPhase !== 'idle') return; // locked during swallow / THE END / revive
+    if (this._eraSwitching) return;          // and during an in-flight time-warp (no set-piece mid-warp)
     if (btn) this.pressBtn(btn);
     if (['earth', 'zerog', 'mars', 'moon', 'jupiter'].indexOf(law) >= 0) return this.applyGravityPreset(law);
     if (law === 'slowmo') return this.toggleSlowmo();
@@ -794,6 +804,8 @@ class Portfolio {
       b.style.pointerEvents = locked ? 'none' : '';
       b.style.opacity = locked ? '0.4' : '';
     });
+    // keep the time-travel dial consistent (no dead-but-clickable affordance during set-pieces)
+    if (this._timeDial) { this._timeDial.style.pointerEvents = locked ? 'none' : ''; this._timeDial.style.opacity = locked ? '0.35' : ''; }
   }
 
   /* ---------------- helpers ---------------- */
@@ -855,8 +867,32 @@ class Portfolio {
     this._onResize = () => this.onResize();
     window.addEventListener('resize', this._onResize);
     this.initHudDrag();
+    this.buildTimeTravelUI();
+    this.initNavGlass();
     this.applyTweaks();
     this.finishPreloader();
+    // OS reports reduced-motion but we're running full (owner's default):
+    // surface the accessible opt-out once, without nagging
+    if (this.osPrefersReduced && !this.prefersReduced) {
+      setTimeout(() => { try { this.toast('FULL MOTION ON — reduce it anytime in the ✦ panel'); } catch (e) {} }, 2600);
+    }
+  }
+
+  // premium touch: the transparent nav gains a frosted-glass backing once you scroll
+  initNavGlass() {
+    const nav = document.getElementById('nav'); if (!nav) return;
+    nav.style.transition = 'background .45s cubic-bezier(.2,.8,.2,1), box-shadow .45s cubic-bezier(.2,.8,.2,1), backdrop-filter .45s ease';
+    let glassed = null;
+    const apply = () => {
+      const on = (window.scrollY || window.pageYOffset || 0) > 40;
+      if (on === glassed) return; glassed = on;
+      nav.style.background = on ? 'rgba(10,10,16,0.55)' : 'transparent';
+      nav.style.backdropFilter = on ? 'blur(14px)' : 'none';
+      nav.style.webkitBackdropFilter = nav.style.backdropFilter;
+      nav.style.boxShadow = on ? '0 10px 32px rgba(0,0,0,0.28)' : 'none';
+    };
+    window.addEventListener('scroll', apply, { passive: true });
+    apply();
   }
 
   showFallback() {
@@ -1070,9 +1106,10 @@ class Portfolio {
     const dpr = window.devicePixelRatio || 1;
     const reduce = this.prefersReduced;
     const P = (n) => (reduce ? Math.round(n * 0.4) : n);
-    if (tier === 'ultra') return { dpr: Math.min(dpr, 2), antialias: true, composer: true, bloom: true, ssao: true, dof: !reduce, shadows: true, particles: P(1500) };
-    if (tier === 'low') return { dpr: 1, antialias: false, composer: false, bloom: false, ssao: false, dof: false, shadows: false, particles: P(280) };
-    return { dpr: Math.min(dpr, 1.75), antialias: true, composer: true, bloom: true, ssao: false, dof: false, shadows: false, particles: P(800) }; // high
+    if (tier === 'ultra') return { dpr: Math.min(dpr, 2), antialias: true, composer: true, bloom: true, ssao: true, dof: !reduce, shadows: true, particles: P(1500), sphereSeg: 128 };
+    if (tier === 'low') return { dpr: 1, antialias: false, composer: false, bloom: false, ssao: false, dof: false, shadows: false, particles: P(280), sphereSeg: 64 };
+    // high: dpr capped at 1.5 — visually near-identical, dramatically cheaper fill-rate on 1080p+ laptops
+    return { dpr: Math.min(dpr, 1.5), antialias: true, composer: true, bloom: true, ssao: false, dof: false, shadows: false, particles: P(800), sphereSeg: 96 };
   }
 
   /* ---------------- three.js ---------------- */
@@ -1081,7 +1118,9 @@ class Portfolio {
     const cfg = this.cfg = this.tierConfig(this.tier);
     const mount = document.getElementById('gl-mount');
     const w = window.innerWidth, h = window.innerHeight;
-    const renderer = new THREE.WebGLRenderer({ antialias: cfg.antialias, alpha: true, powerPreference: 'high-performance', preserveDrawingBuffer: true, stencil: false });
+    // preserveDrawingBuffer OFF — it blocks buffer-swap optimisations and forces a
+    // per-frame copy on many GPUs; removing it is one of the biggest fps wins here.
+    const renderer = new THREE.WebGLRenderer({ antialias: cfg.antialias, alpha: true, powerPreference: 'high-performance', stencil: false });
     renderer.setPixelRatio(Math.min(cfg.dpr, 2));
     renderer.setSize(w, h); renderer.setClearColor(0x000000, 0);
     // filmic, game-cinematic output
@@ -1124,13 +1163,16 @@ class Portfolio {
     const rim = new THREE.PointLight(0x22D3EE, 24, 40); rim.position.set(-4, -1, 2);
     const fill = new THREE.PointLight(0x8B5CF6, 18, 40); fill.position.set(4, 2, -2);
     scene.add(key, rim, fill);
+    this.keyLight = key; this.rimLight = rim; this.fillLight = fill; // era-tinted via lerpEraVisuals
 
+    this.buildSkyDome();
     this.buildGlow(); this.buildSphere(); this.buildShell(); this.buildRings(); this.buildOrbiters(); this.buildTorus(); this.buildShards(); this.buildStars(); this.buildParticles(cfg.particles);
     // hero-centred objects to fade out when the black hole takes the stage
     this._heroAmbient = [this.shell, this.glowV, this.glowC].concat(this.rings || []).concat(this.orbiters || []).filter(Boolean);
     if (this.tier !== 'low') this.buildSectionObjects();
     this.buildSpaceRoamers();
     this.buildRocket();
+    this.initEras();
     this._sectionEls = ['home', 'about', 'skills', 'experience', 'projects', 'contact'].map((id) => document.getElementById(id)).filter(Boolean);
     this._clock = new THREE.Clock();
     this._bhScreen = new THREE.Vector3();
@@ -1161,7 +1203,9 @@ class Portfolio {
       composer.addPass(ssao); this.ssaoPass = ssao;
     }
     if (cfg.bloom) {
-      const bloom = new G.UnrealBloomPass(new THREE.Vector2(w, h), 0.7, 0.6, 0.88); // strength, radius, threshold (selective — higher threshold = less wash)
+      // half-resolution bloom chain — bloom is inherently blurry, so this is visually
+      // indistinguishable while roughly quartering the pass's fill-rate cost
+      const bloom = new G.UnrealBloomPass(new THREE.Vector2(Math.max(1, w >> 1), Math.max(1, h >> 1)), 0.7, 0.6, 0.88); // strength, radius, threshold (selective)
       composer.addPass(bloom); this.bloomPass = bloom;
     }
     if (cfg.dof) {
@@ -1193,33 +1237,50 @@ class Portfolio {
         uVignette: { value: 1.08 }, uGrain: { value: 0.045 }, uReduce: { value: 0 },
         uRes: { value: new window.THREE.Vector2(1280, 720) },
         uBh: { value: new window.THREE.Vector3(0.5, 0.5, 0) }, // xy = black-hole screen pos, z = lens strength
+        uWarp: { value: 0 }, // 0..1 time-travel transmission distortion
       },
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
       fragmentShader: `
-        uniform sampler2D tDiffuse; uniform float uTime, uAberration, uVignette, uGrain, uReduce;
+        uniform sampler2D tDiffuse; uniform float uTime, uAberration, uVignette, uGrain, uReduce, uWarp;
         uniform vec2 uRes; uniform vec3 uBh; varying vec2 vUv;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
         void main(){
           vec2 uv = vUv;
-          // gravitational lensing: bend + swirl the image toward the black hole
+          // ---- time-travel transmission distortion: swirl + zoom ripple toward centre ----
+          if (uWarp > 0.001) {
+            vec2 c = uv - 0.5; float d = length(c);
+            float sw = uWarp * 2.4 * (0.55 - d);
+            float cs2 = cos(sw), sn2 = sin(sw);
+            c = mat2(cs2, -sn2, sn2, cs2) * c;
+            c *= 1.0 - uWarp * 0.22 * sin(d * 9.0 - uTime * 4.0);
+            uv = c + 0.5;
+          }
+          // ---- gravitational lensing: bend + swirl toward the black hole ----
           if (uBh.z > 0.001) {
             float asp = uRes.x / max(uRes.y, 1.0);
-            vec2 d = uv - uBh.xy; d.x *= asp;
-            float dist = length(d);
+            vec2 d2 = uv - uBh.xy; d2.x *= asp;
+            float dist = length(d2);
             float pull = min(uBh.z * 0.05 / (dist * dist + 0.015), 0.6);
             float sw = uBh.z * 0.35 / (dist + 0.05);
             float cs = cos(sw), sn = sin(sw);
-            d = mat2(cs, -sn, sn, cs) * d * (1.0 - pull);
-            d.x /= asp;
-            uv = uBh.xy + d;
+            d2 = mat2(cs, -sn, sn, cs) * d2 * (1.0 - pull);
+            d2.x /= asp;
+            uv = uBh.xy + d2;
           }
           vec2 dir = uv - 0.5; float r2 = dot(dir, dir);
-          // chromatic aberration grows toward the edges
-          float a = uAberration * (0.5 + r2);
+          float ca = uAberration * (0.5 + r2) + uWarp * 0.018; // chromatic aberration, boosted while warping
           vec3 col;
-          col.r = texture2D(tDiffuse, uv - dir * a).r;
-          col.g = texture2D(tDiffuse, uv).g;
-          col.b = texture2D(tDiffuse, uv + dir * a).b;
+          if (uWarp > 0.01) {
+            // radial blur streaks during the warp (uWarp is uniform -> safe control flow)
+            vec2 rb = (0.5 - uv) * uWarp * 0.14; vec3 acc = vec3(0.0);
+            for (int i = 0; i < 6; i++) { float tt = float(i) / 5.0; vec2 s = uv + rb * tt; acc.r += texture2D(tDiffuse, s - dir * ca).r; acc.g += texture2D(tDiffuse, s).g; acc.b += texture2D(tDiffuse, s + dir * ca).b; }
+            col = acc / 6.0;
+            col += uWarp * 0.12; // luminance pulse at peak warp
+          } else {
+            col.r = texture2D(tDiffuse, uv - dir * ca).r;
+            col.g = texture2D(tDiffuse, uv).g;
+            col.b = texture2D(tDiffuse, uv + dir * ca).b;
+          }
           // vignette
           float vig = smoothstep(1.15, 0.25, r2 * uVignette + 0.18);
           col *= mix(0.78, 1.0, vig);
@@ -1248,6 +1309,18 @@ class Portfolio {
       b.addEventListener('click', () => { this.applyTier(t, true); });
       panel.appendChild(b);
     });
+    // Motion preference (persisted): the accessible opt-out for the full-motion default
+    const div = document.createElement('div');
+    div.style.cssText = 'height:1px;background:var(--line);margin:4px 0;';
+    panel.appendChild(div);
+    [['full', 'Motion: Full'], ['reduced', 'Motion: Reduced']].forEach(([k, label]) => {
+      const b = document.createElement('button');
+      b.textContent = label; b.dataset.motion = k;
+      b.setAttribute('aria-label', label);
+      b.style.cssText = 'padding:7px 16px;border-radius:9px;border:1px solid var(--line);background:rgba(255,255,255,0.04);color:#c9ccd8;font:600 12px Space Grotesk,sans-serif;cursor:pointer;letter-spacing:0.04em;text-align:right;';
+      b.addEventListener('click', () => this.setMotionPref(k));
+      panel.appendChild(b);
+    });
     const gear = document.createElement('button');
     gear.setAttribute('aria-label', 'Graphics quality');
     gear.style.cssText = 'display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(10,10,18,0.7);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:#ECEDF2;font:600 12px Space Grotesk,sans-serif;letter-spacing:0.06em;cursor:pointer;box-shadow:0 8px 30px rgba(0,0,0,0.4);';
@@ -1262,11 +1335,21 @@ class Portfolio {
     const lbl = document.getElementById('gfx-label'); if (lbl) lbl.textContent = this.tier.toUpperCase();
     if (!this._gfxPanel) return;
     this._gfxPanel.querySelectorAll('button').forEach((b) => {
-      const on = b.dataset.tier === this.tier;
+      let on;
+      if (b.dataset.tier) on = b.dataset.tier === this.tier;
+      else if (b.dataset.motion) on = b.dataset.motion === (this.prefersReduced ? 'reduced' : 'full');
+      else return;
       b.style.borderColor = on ? 'var(--accent)' : 'var(--line)';
       b.style.background = on ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.04)';
       b.style.color = on ? '#fff' : '#c9ccd8';
     });
+  }
+
+  // persist the motion preference and reload — motion affects init-time systems
+  // (Lenis, cursor, reveal distances, particle counts), so a clean boot is honest
+  setMotionPref(k) {
+    try { localStorage.setItem('uv-motion', k); } catch (e) {}
+    location.reload();
   }
 
   // seamless tier switch: rebuild composer + dpr + particle count, no reload
@@ -1364,7 +1447,8 @@ class Portfolio {
         col += irid * pow(fres, 3.0) * 0.6;
         gl_FragColor = vec4(col, 1.0);
       }`;
-    const geo = new THREE.SphereGeometry(1.3, 128, 128);
+    const seg = (this.cfg && this.cfg.sphereSeg) || 96; // tier-aware density — the noise vertex shader is the cost
+    const geo = new THREE.SphereGeometry(1.3, seg, seg);
     this.sphereUniforms = {
       uTime: { value: 0 }, uAmp: { value: 0.18 }, uFreq: { value: 1.15 },
       uColorA: { value: new THREE.Color(0x8B5CF6) }, uColorB: { value: new THREE.Color(0x22D3EE) },
@@ -1377,7 +1461,7 @@ class Portfolio {
 
   buildTorus() {
     const THREE = window.THREE; const s = this.three.scene;
-    const geo = new THREE.TorusKnotGeometry(0.85, 0.26, 220, 32, 2, 3);
+    const geo = new THREE.TorusKnotGeometry(0.85, 0.26, 160, 24, 2, 3); // lighter tessellation, visually identical at viewing distance
     const mat = new THREE.MeshPhysicalMaterial({ color: 0x6d4bd1, metalness: 1.0, roughness: 0.16, iridescence: 1.0, iridescenceIOR: 1.5, clearcoat: 1.0, clearcoatRoughness: 0.18, emissive: 0x160b2e, emissiveIntensity: 0.5, envMapIntensity: 1.4 });
     this.torus = new THREE.Mesh(geo, mat); this.torus.position.set(2.4, -7, 0); if (this.cfg && this.cfg.shadows) this.torus.castShadow = true; s.add(this.torus);
     const tg = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.makeGlow(34, 211, 238), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5 }));
@@ -1599,7 +1683,7 @@ class Portfolio {
 
   updateRocket(t, dt) {
     const R = this.rocket; if (!R) return; const cam = this.three.camera;
-    if (this.worldPhase !== 'idle') { R.grp.visible = false; return; } // hidden during the swallow cinematic
+    if (this.worldPhase !== 'idle' || (this.era && this.era !== 'space')) { R.grp.visible = false; return; } // hidden during set-pieces and outside the Space era
     R.grp.visible = true;
     const idle = (Date.now() - (this._lastMove || 0)) > 5000;
 
@@ -1709,7 +1793,7 @@ class Portfolio {
   }
 
   animateRoamers(t) {
-    const R = this.roamers; if (!R) return; const THREE = window.THREE; const UP = this._UP || (this._UP = new THREE.Vector3(0, 1, 0));
+    const R = this.roamers; if (!R || (this.era && this.era !== 'space')) return; const THREE = window.THREE; const UP = this._UP || (this._UP = new THREE.Vector3(0, 1, 0));
     R.stations.forEach((o) => { o.grp.rotation.z = t * o.spin; if (o.grp.userData.wings) o.grp.userData.wings.rotation.x = t * 0.3; (o.grp.userData.lights || []).forEach((l, k) => { l.visible = Math.sin(t * 3 + k * 2.1) > -0.3; }); });
     R.rockets.forEach((o) => {
       const p = o.path; o.prev.copy(o.grp.position);
@@ -1724,6 +1808,537 @@ class Portfolio {
       const away = (this._cmTmp || (this._cmTmp = new THREE.Vector3())).copy(o.grp.position).sub(R.sun).normalize();
       o.q.setFromUnitVectors(UP, away); o.grp.quaternion.copy(o.q);
       o.grp.visible = (1 - Math.min(1, Math.abs(x) / span)) > 0.06;
+    });
+  }
+
+  /* =====================================================================
+     TIME TRAVEL — 5 data-driven eras with a time-warp transmission morph.
+     Each era reskins sky dome + fog + HUD/scene accent + dust + a signature
+     procedural 3D backdrop. The grade-pass uWarp (swirl + radial blur +
+     chromatic + flash) masks the hard era swap, so the new era "renders" out
+     of the distortion. prefers-reduced-motion -> instant crossfade.
+     ===================================================================== */
+  buildSkyDome() {
+    const THREE = window.THREE;
+    this.skyUniforms = { uTop: { value: new THREE.Color(0x14111f) }, uBottom: { value: new THREE.Color(0x0a0a0f) } };
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide, fog: false, depthWrite: false,
+      uniforms: this.skyUniforms,
+      vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader: 'uniform vec3 uTop, uBottom; varying vec3 vP; void main(){ float h = clamp(vP.y/60.0*0.5+0.5, 0.0, 1.0); gl_FragColor = vec4(mix(uBottom, uTop, pow(h, 0.8)), 1.0); }',
+    });
+    this.skyDome = new THREE.Mesh(new THREE.SphereGeometry(60, 32, 24), mat);
+    this.skyDome.renderOrder = -1; this.three.scene.add(this.skyDome);
+  }
+
+  initEras() {
+    this.eraEnv = {};
+    this.ERAS = {
+      dino:       { name: 'Dinosaur Age', emoji: '🦕', a: 0x4fb06a, b: 0xff8a3c, fog: 0x0c1a0e, fogD: 0.052, skyTop: 0x2b4020, skyBot: 0x0a1108, dustA: 0x8fe07a, dustB: 0xffcf6b, keyC: 0xffd9a0, rimC: 0x4fb06a, fillC: 0xff8a3c, build: 'buildDinoEra' },
+      kingdom:    { name: 'Kingdom Age',  emoji: '🏰', a: 0xd8b34a, b: 0xb05566, fog: 0x171108, skyTop: 0x46301a, skyBot: 0x120b06, fogD: 0.046, dustA: 0xffcf8a, dustB: 0xd8b34a, keyC: 0xffc26b, rimC: 0xb05566, fillC: 0xd8b34a, build: 'buildKingdomEra' },
+      space:      { name: 'Space Age',    emoji: '🚀', a: 0x8B5CF6, b: 0x22D3EE, fog: 0x0a0a0f, fogD: 0.045, skyTop: 0x14111f, skyBot: 0x0a0a0f, dustA: 0xA78BFA, dustB: 0x67E8F9, keyC: 0xffffff, rimC: 0x22D3EE, fillC: 0x8B5CF6, build: null },
+      apocalypse: { name: 'Apocalypse',   emoji: '☄️', a: 0xff5a3c, b: 0xff9a3c, fog: 0x1a0805, fogD: 0.06, skyTop: 0x4a120a, skyBot: 0x0a0302, dustA: 0xff7a3c, dustB: 0xffb27a, keyC: 0xff8a5a, rimC: 0xff4a2a, fillC: 0xff9a3c, build: 'buildApocalypseEra' },
+      post:       { name: 'Post-Apoc',    emoji: '🌿', a: 0x9bbf8a, b: 0xb9826a, fog: 0x14130f, fogD: 0.05, skyTop: 0x3a3f2c, skyBot: 0x0d0e0a, dustA: 0xc2d2b0, dustB: 0xc9a08a, keyC: 0xd6dcc6, rimC: 0x9bbf8a, fillC: 0xb9826a, build: 'buildPostEra' },
+    };
+    const C = window.THREE.Color; this._lc0 = new C(); this._lcA = new C(); this._lcB = new C(); this._lcT = new C(); // reusable scratch for lerpEraVisuals
+    this.era = 'space';
+    // "only space should have space": every space-scene object that must vanish in the other eras
+    this._spaceOnly = [this.stars, this.glowV, this.glowC, this.shell, this.torus]
+      .concat(this.rings || []).concat(this.orbiters || []).concat(this.shards || [])
+      .concat((this.sectionFX || []).map((o) => o.grp)).filter(Boolean);
+  }
+
+  ensureEraEnv(era) {
+    if (this.eraEnv[era]) return this.eraEnv[era];
+    const fn = this.ERAS[era] && this.ERAS[era].build;
+    const grp = (fn && this[fn]) ? this[fn]() : null;
+    if (grp) { grp.visible = false; this.three.scene.add(grp); this.eraEnv[era] = grp; }
+    return grp || { visible: false };
+  }
+
+  setSpaceRoamersVisible(v) {
+    const R = this.roamers; if (!R) return;
+    R.stations.forEach((o) => { o.grp.visible = v; });
+    R.rockets.forEach((o) => { o.grp.visible = v; });
+    R.comets.forEach((o) => { o.grp.visible = v; });
+  }
+
+  swapEraEnv(target) {
+    Object.keys(this.eraEnv).forEach((k) => { if (this.eraEnv[k]) this.eraEnv[k].visible = false; });
+    if (target !== 'space') {
+      const e = this.ensureEraEnv(target);
+      if (e) { e.visible = true; if (e.userData && e.userData.follow && e.position) e.position.y = this.camState ? this.camState.py : 0; } // snap the world to the camera
+    }
+    const showSpace = target === 'space';
+    this.setSpaceRoamersVisible(showSpace);
+    (this._spaceOnly || []).forEach((o) => { o.visible = showSpace; }); // stars/nebula/crystals/neon exist only in the Space era
+  }
+
+  lerpEraVisuals(from, to, p) {
+    const tmp = this._lcT; const lc = (h1, h2, out) => out.set(h1).lerp(tmp.set(h2), p); // reuse scratch colours — no per-frame GC churn
+    if (this.skyUniforms) { this.skyUniforms.uTop.value.copy(lc(from.skyTop, to.skyTop, this._lc0)); this.skyUniforms.uBottom.value.copy(lc(from.skyBot, to.skyBot, this._lc0)); }
+    if (this.three && this.three.scene.fog) { this.three.scene.fog.color.copy(lc(from.fog, to.fog, this._lc0)); this.three.scene.fog.density = from.fogD + (to.fogD - from.fogD) * p; }
+    const a = lc(from.a, to.a, this._lcA), b = lc(from.b, to.b, this._lcB); // a & b held together -> distinct scratch
+    const aHex = '#' + a.getHexString(), bHex = '#' + b.getHexString();
+    const root = document.documentElement;
+    root.style.setProperty('--accent', aHex); root.style.setProperty('--accent-2', bHex);
+    root.style.setProperty('--accent-grad', 'linear-gradient(120deg,' + aHex + ' 0%,' + aHex + ' 35%,' + bHex + ' 100%)');
+    if (this.sphereUniforms) { this.sphereUniforms.uColorA.value.copy(a); this.sphereUniforms.uColorB.value.copy(b); }
+    if (this._dust) { this._dust.material.uniforms.uColorA.value.copy(lc(from.dustA, to.dustA, this._lc0)); this._dust.material.uniforms.uColorB.value.copy(lc(from.dustB, to.dustB, this._lc0)); }
+    // era-tinted lighting: warm sunset for dino, torch-gold for kingdom, red for apocalypse, pale dawn for post
+    if (this.keyLight && from.keyC != null) this.keyLight.color.copy(lc(from.keyC, to.keyC, this._lc0));
+    if (this.rimLight && from.rimC != null) this.rimLight.color.copy(lc(from.rimC, to.rimC, this._lc0));
+    if (this.fillLight && from.fillC != null) this.fillLight.color.copy(lc(from.fillC, to.fillC, this._lc0));
+    const fb = document.getElementById('gl-fallback');
+    if (fb) fb.style.background = 'radial-gradient(120% 120% at 50% -10%, #' + lc(from.skyTop, to.skyTop, this._lc0).getHexString() + ' 0%, #' + lc(from.fog, to.fog, this._lc0).getHexString() + ' 60%)';
+  }
+
+  applyEraInstant(era) {
+    const cfg = this.ERAS[era]; if (!cfg) return;
+    this.swapEraEnv(era); this.lerpEraVisuals(cfg, cfg, 1); this.era = era; this.markEraUI();
+  }
+
+  switchEra(target, opts) {
+    opts = opts || {};
+    if (!this.ERAS || !this.ERAS[target]) return;
+    if (this._eraSwitching) return;
+    if (target === this.era && !opts.force) return;
+    if (this.worldPhase !== 'idle' && !opts.force) return; // not during a set-piece
+    const g = this.gsap; const from = this.ERAS[this.era], to = this.ERAS[target];
+    this._eraSwitching = true;
+    const finish = () => { this.era = target; this._eraSwitching = false; this.markEraUI(); };
+    if (!g || this.prefersReduced) { this.swapEraEnv(target); this.lerpEraVisuals(from, to, 1); finish(); return; }
+    const gp = this.gradePass; const warpEl = document.getElementById('warp-fx'); const proxy = { p: 0 };
+    this.toast('TIME WARP — ' + to.name);
+    const tl = g.timeline({ onComplete: finish, onInterrupt: () => { this._eraSwitching = false; if (gp) gp.uniforms.uWarp.value = 0; if (warpEl) warpEl.style.opacity = '0'; } });
+    if (gp) { tl.to(gp.uniforms.uWarp, { value: 1, duration: 0.55, ease: 'power2.in' }, 0); tl.to(gp.uniforms.uWarp, { value: 0, duration: 0.95, ease: 'power2.out' }, 0.6); }
+    if (warpEl) { tl.fromTo(warpEl, { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power2.in' }, 0); tl.to(warpEl, { opacity: 0, duration: 0.7, ease: 'power2.out' }, 0.7); }
+    // commit the era at the masked swap (peak warp) so the new era's movers animate immediately and the arc captures the right era
+    tl.add(() => { this.era = target; this.swapEraEnv(target); this.markEraUI(); }, 0.55);
+    tl.to(proxy, { p: 1, duration: 0.95, ease: 'power2.inOut', onUpdate: () => this.lerpEraVisuals(from, to, proxy.p) }, 0.5);
+    this._eraTl = tl; return tl;
+  }
+
+  animateEra(t) {
+    const env = this.era && this.eraEnv[this.era]; if (!env || !env.visible) return;
+    // the era world travels with the camera (smooth lag) so it surrounds every section
+    if (env.userData.follow && this.camState) env.position.y += (this.camState.py - env.position.y) * 0.08;
+    (env.userData.movers || []).forEach((m) => {
+      if (m.kind === 'glide') { m.mesh.position.x = m.x0 + (((t * m.sp + m.ph) % m.span) - m.span * 0.5); m.mesh.position.y = m.y0 + Math.sin(t * 0.7 + m.ph) * 0.35; m.mesh.rotation.z = Math.sin(t * 2 + m.ph) * 0.2; }
+      else if (m.kind === 'sway') { m.mesh.rotation.z = Math.sin(t * 0.5 + m.ph) * 0.05; }
+      else if (m.kind === 'wave') { m.mesh.rotation.y = Math.sin(t * 1.6 + m.ph) * 0.35; }
+      else if (m.kind === 'flicker') { m.mesh.material.emissiveIntensity = m.base + Math.sin(t * 6 + m.ph) * 0.45 + 0.45; }
+      else if (m.kind === 'dino') {
+        // living dinosaurs: neck grazing sweep, tail swish, breathing bob
+        if (m.neck) { m.neck.rotation.z = Math.sin(t * 0.45 + m.ph) * 0.1 - 0.04; m.neck.rotation.y = Math.sin(t * 0.3 + m.ph * 1.3) * 0.12; }
+        if (m.tail) m.tail.rotation.y = Math.sin(t * 0.7 + m.ph) * 0.18;
+        m.mesh.position.y = m.y0 + Math.sin(t * 1.1 + m.ph) * 0.025;
+      }
+      else if (m.kind === 'rise') {
+        const cy = ((t * m.sp + m.ph) % m.h);
+        m.mesh.position.y = m.y0 + cy;
+        m.mesh.material.opacity = m.o * (1 - cy / m.h);
+      }
+      else if (m.kind === 'spin') { m.mesh.rotation.z = t * m.sp; }
+      else if (m.kind === 'pulse') { m.mesh.material.opacity = m.base + Math.sin(t * m.sp + m.ph) * m.amp; }
+    });
+  }
+
+  /* =====================================================================
+     ERA WORLDS — full environments (ground + flora/architecture + creatures
+     + sun) that FOLLOW the camera down the scroll, so every section of the
+     page sits inside the era's world. Space elements are hidden outside the
+     Space era (see _spaceOnly in initEras / swapEraEnv).
+     ===================================================================== */
+  _eraMat(c, e, ei, rough) { return new window.THREE.MeshStandardMaterial({ color: c, roughness: rough == null ? 0.92 : rough, metalness: 0.06, emissive: e || 0x000000, emissiveIntensity: ei || 0 }); }
+
+  // displaced ground disc — flat near the centre (content area), rolling further out
+  _ground(color, radius) {
+    const THREE = window.THREE;
+    const geo = new THREE.CircleGeometry(radius, 56);
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i); const r = Math.hypot(x, y);
+      const f = Math.min(1, Math.max(0, (r - 4.5) / 8));
+      pos.setZ(i, (Math.sin(x * 0.33) * Math.cos(y * 0.27) + Math.sin(x * 0.11 + y * 0.17) * 0.6) * 0.55 * f);
+    }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, this._eraMat(color, 0x000000, 0, 1.0));
+    m.rotation.x = -Math.PI / 2; m.position.y = -3.4;
+    return m;
+  }
+
+  // deterministic instanced scatter in a ring around the camera path
+  _scatterInst(grp, geo, mat, count, rMin, rMax, seed, yAt, sMin, sMax) {
+    const THREE = window.THREE;
+    const inst = new THREE.InstancedMesh(geo, mat, count);
+    const d = new THREE.Object3D();
+    const sd = (n) => { const x = Math.sin(n * 127.1 + seed * 311.7) * 43758.5453; return x - Math.floor(x); };
+    for (let i = 0; i < count; i++) {
+      const a = sd(i) * Math.PI * 2; const r = rMin + sd(i + 57) * (rMax - rMin);
+      const s = sMin + sd(i + 113) * (sMax - sMin);
+      d.position.set(Math.cos(a) * r, yAt, Math.sin(a) * r);
+      d.rotation.y = sd(i + 211) * Math.PI * 2; d.scale.setScalar(s);
+      d.updateMatrix(); inst.setMatrixAt(i, d.matrix);
+    }
+    inst.instanceMatrix.needsUpdate = true; grp.add(inst); return inst;
+  }
+
+  _tube(pts, radius, mat, segs) {
+    const THREE = window.THREE;
+    const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+    return new THREE.Mesh(new THREE.TubeGeometry(curve, segs || 14, radius, 8, false), mat);
+  }
+
+  _sunSprite(r, g, b, scale, pos, opacity) {
+    const THREE = window.THREE;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.makeGlow(r, g, b), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: opacity }));
+    sp.scale.set(scale, scale, 1); sp.position.set(pos[0], pos[1], pos[2]); return sp;
+  }
+
+  /* ---- a proper low-poly sauropod: curved tube neck + tail, legged body ---- */
+  makeSauropod(color) {
+    const THREE = window.THREE; const grp = new THREE.Group();
+    const mat = this._eraMat(color, 0x000000, 0, 0.95);
+    const belly = this._eraMat(color, 0x000000, 0, 0.95); // same tone, kept separate for future tinting
+    // body (feet at local y=0)
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.78, 20, 16), mat); body.scale.set(1.65, 1.05, 1.1); body.position.y = 1.62; grp.add(body);
+    const chest = new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 14), belly); chest.position.set(0.75, 1.66, 0); grp.add(chest);
+    // neck: smooth curve rising forward, pivoted at the shoulder so it can sway
+    const neckGrp = new THREE.Group(); neckGrp.position.set(1.05, 1.85, 0);
+    const neck = this._tube([[0, 0, 0], [0.55, 0.7, 0.05], [0.8, 1.45, 0.1], [0.85, 2.1, 0.05]], 0.2, mat, 16); neckGrp.add(neck);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 12), mat); head.scale.set(1.5, 0.85, 0.9); head.position.set(0.98, 2.16, 0.05); neckGrp.add(head);
+    const snout = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), mat); snout.scale.set(1.5, 0.8, 0.9); snout.position.set(1.3, 2.1, 0.05); neckGrp.add(snout);
+    grp.add(neckGrp);
+    // tail: long tapering curve, pivoted at the hip
+    const tailGrp = new THREE.Group(); tailGrp.position.set(-1.15, 1.6, 0);
+    const tail = this._tube([[0, 0, 0], [-0.9, -0.25, 0.15], [-1.8, -0.8, 0.35], [-2.5, -1.35, 0.5]], 0.17, mat, 16); tailGrp.add(tail);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 8), mat); tip.position.set(-2.62, -1.5, 0.53); tip.rotation.z = 2.15; tailGrp.add(tip);
+    grp.add(tailGrp);
+    // 4 legs + feet
+    [[0.75, 0.42], [0.75, -0.42], [-0.8, 0.42], [-0.8, -0.42]].forEach(([x, z]) => {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.21, 1.25, 10), mat); leg.position.set(x, 0.63, z); grp.add(leg);
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.26, 0.14, 10), mat); foot.position.set(x, 0.07, z); grp.add(foot);
+    });
+    // dorsal ridge along the spine + eyes
+    for (let i = 0; i < 7; i++) { const pl = new THREE.Mesh(new THREE.ConeGeometry(0.085, 0.2, 4), mat); pl.position.set(0.95 - i * 0.36, 2.34 - Math.abs(i - 3) * 0.1, 0); pl.scale.z = 0.45; grp.add(pl); }
+    const eyeM = this._eraMat(0x0a0c08, 0x000000, 0, 0.4);
+    [0.14, -0.14].forEach((z) => { const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), eyeM); eye.position.set(1.08, 2.24, z); neckGrp.add(eye); });
+    grp.userData.neck = neckGrp; grp.userData.tail = tailGrp;
+    return grp;
+  }
+
+  /* ---- a theropod (rex-like): tilted body, big head, strong legs, long tail ---- */
+  makeTheropod(color) {
+    const THREE = window.THREE; const grp = new THREE.Group();
+    const mat = this._eraMat(color, 0x000000, 0, 0.95);
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.55, 18, 14), mat); body.scale.set(1.55, 0.95, 0.9); body.position.set(0, 1.28, 0); body.rotation.z = 0.28; grp.add(body);
+    const neckGrp = new THREE.Group(); neckGrp.position.set(0.72, 1.62, 0);
+    const neck = this._tube([[0, 0, 0], [0.28, 0.3, 0], [0.5, 0.52, 0]], 0.16, mat, 8); neckGrp.add(neck);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.34, 0.3), mat); head.position.set(0.82, 0.6, 0); neckGrp.add(head);
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.24), mat); jaw.position.set(0.9, 0.42, 0); jaw.rotation.z = -0.12; neckGrp.add(jaw);
+    grp.add(neckGrp);
+    const tailGrp = new THREE.Group(); tailGrp.position.set(-0.75, 1.2, 0);
+    const tail = this._tube([[0, 0, 0], [-0.85, 0.02, 0.1], [-1.7, -0.12, 0.25], [-2.3, -0.3, 0.35]], 0.13, mat, 14); tailGrp.add(tail);
+    grp.add(tailGrp);
+    [[0.12, 0.26], [0.12, -0.26]].forEach(([x, z]) => {
+      const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.11, 0.7, 8), mat); thigh.position.set(x, 0.85, z); thigh.rotation.z = 0.18; grp.add(thigh);
+      const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.07, 0.62, 8), mat); shin.position.set(x + 0.08, 0.32, z); grp.add(shin);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.2), mat); foot.position.set(x + 0.16, 0.05, z); grp.add(foot);
+    });
+    [[0.55, 1.42, 0.18], [0.55, 1.42, -0.18]].forEach(([x, y, z]) => { const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.3, 6), mat); arm.position.set(x, y, z); arm.rotation.z = 1.0; grp.add(arm); });
+    // eyes + brow ridge
+    const teyeM = this._eraMat(0x0c0a06, 0x000000, 0, 0.4);
+    [0.13, -0.13].forEach((z) => { const eye = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), teyeM); eye.position.set(0.7, 0.72, z); neckGrp.add(eye); });
+    grp.userData.neck = neckGrp; grp.userData.tail = tailGrp;
+    return grp;
+  }
+
+  /* ---- a stegosaur: double row of back plates + tail spikes ---- */
+  makeStegosaur(color, plateColor) {
+    const THREE = window.THREE; const grp = new THREE.Group();
+    const mat = this._eraMat(color, 0x000000, 0, 0.95);
+    const plateM = this._eraMat(plateColor, 0x000000, 0, 0.9);
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.68, 18, 14), mat); body.scale.set(1.7, 1.0, 1.05); body.position.y = 0.98; grp.add(body);
+    // low head on a short neck
+    const neckGrp = new THREE.Group(); neckGrp.position.set(1.0, 0.95, 0);
+    const neck = this._tube([[0, 0, 0], [0.32, -0.1, 0], [0.6, -0.22, 0]], 0.14, mat, 8); neckGrp.add(neck);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), mat); head.scale.set(1.5, 0.8, 0.9); head.position.set(0.72, -0.26, 0); neckGrp.add(head);
+    grp.add(neckGrp);
+    // the iconic double row of alternating plates
+    for (let i = 0; i < 5; i++) {
+      [0.1, -0.1].forEach((z, r) => {
+        const pl = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.5, 4), plateM);
+        pl.position.set(0.85 - i * 0.42 - r * 0.2, 1.62 - Math.abs(i - 2) * 0.12, z);
+        pl.scale.z = 0.3; grp.add(pl);
+      });
+    }
+    // tail with thagomizer spikes
+    const tailGrp = new THREE.Group(); tailGrp.position.set(-1.1, 0.9, 0);
+    const tail = this._tube([[0, 0, 0], [-0.8, -0.15, 0.1], [-1.5, -0.5, 0.2], [-1.95, -0.8, 0.25]], 0.13, mat, 12); tailGrp.add(tail);
+    [[0.12], [-0.12]].forEach(([z]) => { const spike = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.42, 6), plateM); spike.position.set(-1.9, -0.62, 0.25 + z); spike.rotation.z = 0.9; tailGrp.add(spike); });
+    grp.add(tailGrp);
+    [[0.7, 0.36], [0.7, -0.36], [-0.72, 0.36], [-0.72, -0.36]].forEach(([x, z]) => {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.85, 8), mat); leg.position.set(x, 0.43, z); grp.add(leg);
+    });
+    grp.userData.neck = neckGrp; grp.userData.tail = tailGrp;
+    return grp;
+  }
+
+  /* ---- 🦕 primordial jungle: forest, ferns, volcano, real dinosaurs ---- */
+  buildDinoEra() {
+    const THREE = window.THREE; const g = new THREE.Group(); const movers = [];
+    g.userData.follow = true;
+    g.add(this._ground(0x13240f, 34));
+    const dense = this.tier === 'ultra' ? 130 : this.tier === 'low' ? 45 : 90;
+    // jungle canopy trees (instanced trunks + blob canopies share the scatter seed -> aligned)
+    const trunkMat = this._eraMat(0x2c1f12);
+    this._scatterInst(g, new THREE.CylinderGeometry(0.09, 0.16, 2.7, 7), trunkMat, dense, 6.5, 27, 7, -3.4 + 1.3, 0.8, 1.9);
+    this._scatterInst(g, new THREE.IcosahedronGeometry(1.05, 1), this._eraMat(0x1b4a22, 0x0a2410, 0.12), dense, 6.5, 27, 7, -3.4 + 3.1, 0.8, 1.9);
+    // ferns near the ground
+    this._scatterInst(g, new THREE.ConeGeometry(0.4, 0.55, 6), this._eraMat(0x2a6a30, 0x123a16, 0.15), Math.round(dense * 0.6), 5.2, 22, 21, -3.4 + 0.26, 0.6, 1.4);
+    // volcano on the horizon with a flickering caldera + smoke
+    const volcano = new THREE.Mesh(new THREE.ConeGeometry(4.6, 8.5, 7), this._eraMat(0x1a140e)); volcano.position.set(-13, -3.4 + 4.2, -22); g.add(volcano);
+    const lava = new THREE.Mesh(new THREE.SphereGeometry(1.1, 14, 12), this._eraMat(0x2a0d04, 0xff5a1e, 1.3)); lava.position.set(-13, 5.2, -22); g.add(lava); movers.push({ mesh: lava, kind: 'flicker', base: 0.9, ph: 0 });
+    for (let i = 0; i < 3; i++) { const sm = this._sunSprite(90, 80, 78, 2.6 + i, [-13, 6.5 + i * 1.4, -22], 0.16); g.add(sm); movers.push({ mesh: sm, kind: 'rise', y0: 6.5 + i * 1.4, h: 3, sp: 0.5, ph: i * 1.1, o: 0.16 }); }
+    // low warm sun through the haze
+    g.add(this._sunSprite(255, 150, 70, 16, [14, 2.5, -30], 0.5));
+    // dinosaurs — the stars of the era
+    const s1 = this.makeSauropod(0x3d5a33); s1.position.set(-6.8, -3.4, -8.5); s1.scale.setScalar(1.2); g.add(s1);
+    movers.push({ mesh: s1, kind: 'dino', neck: s1.userData.neck, tail: s1.userData.tail, y0: -3.4, ph: 0 });
+    const s2 = this.makeSauropod(0x46543a); s2.position.set(6.2, -3.4, -11); s2.rotation.y = Math.PI * 0.85; s2.scale.setScalar(0.92); g.add(s2);
+    movers.push({ mesh: s2, kind: 'dino', neck: s2.userData.neck, tail: s2.userData.tail, y0: -3.4, ph: 2.2 });
+    const rex = this.makeTheropod(0x5a4a30); rex.position.set(3.6, -3.4, -5.5); rex.rotation.y = -Math.PI * 0.3; rex.scale.setScalar(0.95); g.add(rex);
+    movers.push({ mesh: rex, kind: 'dino', neck: rex.userData.neck, tail: rex.userData.tail, y0: -3.4, ph: 4.1 });
+    // a baby sauropod shadowing the adult, and a grazing stegosaur
+    const baby = this.makeSauropod(0x55764a); baby.position.set(-4.5, -3.4, -7.0); baby.rotation.y = 0.55; baby.scale.setScalar(0.48); g.add(baby);
+    movers.push({ mesh: baby, kind: 'dino', neck: baby.userData.neck, tail: baby.userData.tail, y0: -3.4, ph: 1.3 });
+    const stego = this.makeStegosaur(0x4a5236, 0x8a5c34); stego.position.set(0.4, -3.4, -10); stego.rotation.y = 2.5; stego.scale.setScalar(1.05); g.add(stego);
+    movers.push({ mesh: stego, kind: 'dino', neck: stego.userData.neck, tail: stego.userData.tail, y0: -3.4, ph: 3.2 });
+    // a still jungle pond (env-map reflections make it read as water)
+    const pond = new THREE.Mesh(new THREE.CircleGeometry(2.1, 28), new THREE.MeshPhysicalMaterial({ color: 0x0e2a2e, metalness: 0.85, roughness: 0.12, envMapIntensity: 1.6 }));
+    pond.rotation.x = -Math.PI / 2; pond.position.set(4.6, -3.34, -7.5); g.add(pond);
+    // mossy rocks + fallen logs
+    this._scatterInst(g, new THREE.DodecahedronGeometry(0.42, 0), this._eraMat(0x1c241a), 20, 5.5, 24, 33, -3.4 + 0.22, 0.5, 1.4);
+    const logGeo = new THREE.CylinderGeometry(0.13, 0.17, 1.7, 7); logGeo.rotateZ(Math.PI / 2);
+    this._scatterInst(g, logGeo, this._eraMat(0x241a10), 12, 6, 22, 43, -3.4 + 0.14, 0.7, 1.4);
+    // distant mountain ridge closes the horizon
+    this._scatterInst(g, new THREE.ConeGeometry(3.2, 5.6, 5), this._eraMat(0x0e160b), 14, 28, 33, 53, -3.4 + 2.6, 1.0, 2.1);
+    // low ground mist
+    g.add(this._sunSprite(120, 150, 120, 12, [-5, -2.6, -10], 0.07));
+    g.add(this._sunSprite(120, 150, 120, 10, [6, -2.7, -13], 0.06));
+    // gliding pterosaurs
+    for (let i = 0; i < 3; i++) {
+      const p = new THREE.Group(); const w = this._eraMat(0x241a10);
+      [-1, 1].forEach((s) => { const wing = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.04, 0.34), w); wing.position.x = s * 0.65; wing.rotation.z = s * 0.45; p.add(wing); });
+      const bd = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.5, 6), w); bd.rotation.x = Math.PI / 2; p.add(bd);
+      p.position.set((i - 1) * 4, 3.5 + i, -9); g.add(p);
+      movers.push({ mesh: p, kind: 'glide', x0: (i - 1) * 4, y0: 3.5 + i, sp: 1.2 + i * 0.4, span: 26, ph: i * 2.1 });
+    }
+    g.userData.movers = movers; return g;
+  }
+
+  /* ---- 🏰 dusk kingdom: castle on a hill, torches, banners, pines, moon ---- */
+  buildKingdomEra() {
+    const THREE = window.THREE; const g = new THREE.Group(); const movers = [];
+    g.userData.follow = true;
+    g.add(this._ground(0x1c1712, 34));
+    const stone = this._eraMat(0x3a332b, 0x000000, 0, 0.98), roofM = this._eraMat(0x30171d);
+    // hill + keep
+    const hill = new THREE.Mesh(new THREE.ConeGeometry(7.5, 3.6, 9), this._eraMat(0x211b14)); hill.position.set(0, -3.4 + 1.6, -16); g.add(hill);
+    const keep = new THREE.Mesh(new THREE.BoxGeometry(4.4, 3.6, 3.4), stone); keep.position.set(0, 0.6, -16); g.add(keep);
+    const keepRoof = new THREE.Mesh(new THREE.ConeGeometry(3.1, 1.6, 4), roofM); keepRoof.position.set(0, 3.2, -16); keepRoof.rotation.y = Math.PI / 4; g.add(keepRoof);
+    // four corner towers with conical roofs
+    [[-2.6, -14.6], [2.6, -14.6], [-2.6, -17.4], [2.6, -17.4]].forEach(([x, z]) => {
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, 4.6, 10), stone); t.position.set(x, 0.9, z); g.add(t);
+      const r = new THREE.Mesh(new THREE.ConeGeometry(0.85, 1.5, 10), roofM); r.position.set(x, 3.9, z); g.add(r);
+    });
+    // curtain wall + gate
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(7.4, 1.5, 0.5), stone); wall.position.set(0, -2.0, -13.9); g.add(wall);
+    const gate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4, 0.6), this._eraMat(0x120b06)); gate.position.set(0, -2.1, -13.85); g.add(gate);
+    // warm windows (emissive) + torches that flicker
+    const winM = this._eraMat(0x1a0e06, 0xffb851, 1.6);
+    for (let i = 0; i < 6; i++) { const w = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.4), winM); w.position.set(-1.5 + (i % 3) * 1.5, 0.3 + Math.floor(i / 3) * 1.2, -14.28); g.add(w); }
+    [[-3.6, -13.6], [3.6, -13.6]].forEach(([x, z], i) => {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.2, 6), stone); post.position.set(x, -2.4, z); g.add(post);
+      const fl = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), this._eraMat(0x381505, 0xff9a3c, 1.8)); fl.position.set(x, -1.7, z); g.add(fl);
+      movers.push({ mesh: fl, kind: 'flicker', base: 1.4, ph: i * 1.7 });
+      g.add(this._sunSprite(255, 165, 80, 1.6, [x, -1.7, z], 0.5));
+    });
+    // banners on poles
+    for (let i = 0; i < 3; i++) {
+      const b = new THREE.Group();
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3, 6), stone); pole.position.y = 1.5; b.add(pole);
+      const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.62), this._eraMat(0x6a1f2c, 0x431018, 0.4)); flag.material.side = THREE.DoubleSide; flag.position.set(0.55, 2.6, 0); b.add(flag);
+      b.position.set(-4 + i * 4, -3.4, -10.5); g.add(b);
+      movers.push({ mesh: flag, kind: 'wave', ph: i });
+    }
+    // pine forest ring + village huts
+    const dense = this.tier === 'ultra' ? 90 : this.tier === 'low' ? 30 : 60;
+    this._scatterInst(g, new THREE.ConeGeometry(0.62, 2.4, 7), this._eraMat(0x14261a), dense, 8, 26, 31, -3.4 + 1.2, 0.8, 1.7);
+    this._scatterInst(g, new THREE.BoxGeometry(0.9, 0.7, 0.9), this._eraMat(0x2b2117, 0xffb851, 0.12), 14, 9, 20, 41, -3.4 + 0.35, 0.8, 1.3);
+    // crenellations along the curtain wall (single instanced mesh)
+    const cren = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.28, 0.5), stone, 12);
+    const dd = new THREE.Object3D();
+    for (let i = 0; i < 12; i++) { dd.position.set(-3.3 + i * 0.6, -1.12, -13.9); dd.updateMatrix(); cren.setMatrixAt(i, dd.matrix); }
+    cren.instanceMatrix.needsUpdate = true; g.add(cren);
+    // windmill on the eastern rise, blades turning
+    const mill = new THREE.Group();
+    const mTower = new THREE.Mesh(new THREE.ConeGeometry(0.85, 2.6, 7), stone); mTower.position.y = 1.3; mill.add(mTower);
+    const mCap = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), roofM); mCap.position.y = 2.7; mill.add(mCap);
+    const blades = new THREE.Group();
+    for (let i = 0; i < 4; i++) { const bl = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 1.7), this._eraMat(0x241c12)); bl.material.side = THREE.DoubleSide; bl.position.y = 0.75; const piv = new THREE.Group(); piv.rotation.z = i * Math.PI / 2; piv.add(bl); blades.add(piv); }
+    blades.position.set(0, 2.55, 0.5); mill.add(blades);
+    mill.position.set(9.5, -3.4, -13); g.add(mill);
+    movers.push({ mesh: blades, kind: 'spin', sp: 0.45 });
+    // chimney smoke from the keep
+    for (let k = 0; k < 2; k++) { const sm = this._sunSprite(120, 110, 100, 1.6 + k, [0.9, 3.9 + k * 1.1, -16], 0.12); g.add(sm); movers.push({ mesh: sm, kind: 'rise', y0: 3.9 + k * 1.1, h: 2.6, sp: 0.4, ph: k * 1.3, o: 0.12 }); }
+    // cobble road to the gate + market stalls
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 7), this._eraMat(0x241d15, 0x000000, 0, 1)); road.rotation.x = -Math.PI / 2; road.position.set(0, -3.36, -10.4); g.add(road);
+    [[-1.8, -9.4, 0x6a1f2c], [1.9, -9.8, 0x2c4a6a]].forEach(([x, z, c]) => {
+      const stall = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.7), this._eraMat(0x2b2117)); stall.position.set(x, -3.4 + 0.28, z); g.add(stall);
+      const canopy = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 0.8), this._eraMat(c, c, 0.15)); canopy.material.side = THREE.DoubleSide; canopy.rotation.x = -0.35; canopy.position.set(x, -3.4 + 0.85, z); g.add(canopy);
+    });
+    // mountains on the horizon
+    this._scatterInst(g, new THREE.ConeGeometry(3.4, 5.2, 5), this._eraMat(0x181209), 12, 28, 33, 63, -3.4 + 2.4, 1.0, 2.0);
+    // moon
+    g.add(this._sunSprite(210, 220, 255, 9, [-12, 7, -28], 0.55));
+    // ravens
+    for (let i = 0; i < 3; i++) {
+      const r = new THREE.Group(); const w = this._eraMat(0x0a0908);
+      [-1, 1].forEach((s) => { const wing = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.03, 0.18), w); wing.position.x = s * 0.28; wing.rotation.z = s * 0.6; r.add(wing); });
+      r.position.set((i - 1) * 5, 4 + i, -8); g.add(r);
+      movers.push({ mesh: r, kind: 'glide', x0: (i - 1) * 5, y0: 4 + i, sp: 1.6 + i * 0.3, span: 26, ph: i * 1.7 });
+    }
+    g.userData.movers = movers; return g;
+  }
+
+  /* ---- ☄️ burning world: charred ground, ruins, embers, smoke columns ---- */
+  buildApocalypseEra() {
+    const THREE = window.THREE; const g = new THREE.Group(); const movers = [];
+    g.userData.follow = true;
+    g.add(this._ground(0x171008, 34));
+    // shattered building shells, tilted
+    this._scatterInst(g, new THREE.BoxGeometry(1.6, 4.2, 1.6), this._eraMat(0x1c130c, 0x38120a, 0.25), this.tier === 'low' ? 10 : 18, 8, 24, 51, -3.4 + 1.6, 0.7, 1.6);
+    // burning rubble field (shared-material flicker)
+    const rubbleM = this._eraMat(0x241108, 0xff4a1a, 0.7);
+    this._scatterInst(g, new THREE.TetrahedronGeometry(0.5, 0), rubbleM, this.tier === 'low' ? 20 : 40, 5, 22, 61, -3.4 + 0.3, 0.6, 1.5);
+    movers.push({ mesh: { material: rubbleM }, kind: 'flicker', base: 0.55, ph: 0 });
+    // foreground smouldering boulders
+    for (let i = 0; i < 4; i++) {
+      const r = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7 + (i % 2) * 0.3, 0), this._eraMat(0x1a0e09, 0xff4a1a, 0.6));
+      r.position.set((i - 1.5) * 4.4, -3.4 + 0.5, -7 - (i % 2) * 2); g.add(r);
+      movers.push({ mesh: r, kind: 'flicker', base: 0.45, ph: i });
+    }
+    // rising smoke columns
+    [[-8, -14], [5, -18], [11, -10]].forEach(([x, z], i) => {
+      for (let k = 0; k < 3; k++) {
+        const sm = this._sunSprite(70, 60, 58, 3 + k * 1.2, [x, -1 + k * 1.6, z], 0.14);
+        g.add(sm); movers.push({ mesh: sm, kind: 'rise', y0: -1 + k * 1.6, h: 4, sp: 0.6, ph: i * 2 + k, o: 0.14 });
+      }
+    });
+    // glowing ground fissures radiating heat
+    const fisM = this._eraMat(0x1a0a04, 0xff3a10, 1.1);
+    for (let i = 0; i < 6; i++) {
+      const a = i * 1.05 + 0.4, r = 4.5 + (i % 3) * 1.6;
+      const fis = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.04, 0.14), fisM);
+      fis.position.set(Math.cos(a) * r, -3.36, Math.sin(a) * r); fis.rotation.y = a + 0.6; g.add(fis);
+    }
+    movers.push({ mesh: { material: fisM }, kind: 'flicker', base: 0.85, ph: 2.5 });
+    // leaning power poles with a sagging line
+    const poleM = this._eraMat(0x140d08);
+    const poles = [[-6, -9, 0.22], [-1.5, -11, -0.16], [3.5, -9.5, 0.3]];
+    poles.forEach(([x, z, lean]) => { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 3.4, 6), poleM); p.position.set(x, -3.4 + 1.6, z); p.rotation.z = lean; g.add(p); const cross = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.06, 0.06), poleM); cross.position.set(x + lean * 2.6, -3.4 + 3.0, z); cross.rotation.z = lean; g.add(cross); });
+    g.add(this._tube([[-5.5, -0.45, -9], [-3.6, -0.9, -10], [-1.2, -0.5, -11]], 0.015, poleM, 10));
+    g.add(this._tube([[-1.2, -0.5, -11], [1.2, -1.0, -10.2], [3.9, -0.35, -9.5]], 0.015, poleM, 10));
+    // burning city skyline + fire glows that pulse
+    this._scatterInst(g, new THREE.BoxGeometry(1.8, 5.5, 1.8), this._eraMat(0x120a06, 0x2a0d04, 0.35), 16, 26, 32, 73, -3.4 + 2.4, 0.8, 1.9);
+    [[-18, -26], [8, -28], [22, -24]].forEach(([x, z], i) => {
+      const fire = this._sunSprite(255, 110, 40, 5.5, [x, -1.4, z], 0.3); g.add(fire);
+      movers.push({ mesh: fire, kind: 'pulse', base: 0.28, amp: 0.14, sp: 2.2, ph: i * 1.9 });
+    });
+    // blood-red sun
+    g.add(this._sunSprite(255, 80, 40, 14, [8, 4, -30], 0.6));
+    g.userData.movers = movers; return g;
+  }
+
+  /* ---- 🌿 reclaimed dawn: overgrown ruins, rubble, a sprout, a lone bird ---- */
+  buildPostEra() {
+    const THREE = window.THREE; const g = new THREE.Group(); const movers = [];
+    g.userData.follow = true;
+    g.add(this._ground(0x181a12, 34));
+    const concrete = this._eraMat(0x2b2d24, 0x000000, 0, 0.98), vineM = this._eraMat(0x1e3a1c, 0x2f6a2c, 0.3);
+    // ruined towers: broken stacked storeys + exposed rebar + climbing vines
+    [[-7.5, 7, -14], [-2.5, 10, -17], [4, 8.5, -13], [9, 12, -18]].forEach(([x, h, z], i) => {
+      let y = -3.4;
+      const storeys = Math.round(h / 2.4);
+      for (let k = 0; k < storeys; k++) {
+        const sw = 2.6 - k * 0.12;
+        const b = new THREE.Mesh(new THREE.BoxGeometry(sw, 2.1, sw), concrete);
+        b.position.set(x + (k % 2 ? 0.14 : -0.1), y + 1.05, z + (k % 2 ? -0.1 : 0.12));
+        b.rotation.y = (k % 2 ? 0.06 : -0.05); g.add(b); y += 2.15;
+      }
+      for (let k = 0; k < 3; k++) { const rb = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.1, 5), this._eraMat(0x4a3226)); rb.position.set(x - 0.6 + k * 0.55, y + 0.4, z); rb.rotation.z = (k - 1) * 0.5; g.add(rb); }
+      const vine = this._tube([[x - 1.2, -3.4, z + 1.3], [x - 1.35, -3.4 + h * 0.4, z + 1.32], [x - 1.1, -3.4 + h * 0.75, z + 1.2]], 0.08, vineM, 10); g.add(vine);
+    });
+    // rubble field + young returning trees
+    this._scatterInst(g, new THREE.DodecahedronGeometry(0.35, 0), concrete, this.tier === 'low' ? 18 : 36, 5, 20, 71, -3.4 + 0.2, 0.6, 1.6);
+    this._scatterInst(g, new THREE.ConeGeometry(0.4, 1.5, 6), this._eraMat(0x24422a, 0x102410, 0.18), this.tier === 'low' ? 12 : 26, 7, 24, 81, -3.4 + 0.75, 0.7, 1.5);
+    // the sprout of hope — small, glowing, front and centre-right
+    const sprout = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.5, 6), this._eraMat(0x1c4a22, 0x4fd06a, 1.2)); sprout.position.set(2.2, -3.4 + 0.25, -4.5); g.add(sprout);
+    movers.push({ mesh: sprout, kind: 'flicker', base: 0.9, ph: 0.5 });
+    g.add(this._sunSprite(120, 230, 140, 2.2, [2.2, -3.0, -4.5], 0.4));
+    // collapsed overpass: two piers, one deck slab down
+    const pierM = this._eraMat(0x272921, 0x000000, 0, 0.98);
+    [[-6.5, -9.5], [-3.6, -9.5]].forEach(([x, z]) => { const pier = new THREE.Mesh(new THREE.BoxGeometry(0.6, 2.3, 0.6), pierM); pier.position.set(x, -3.4 + 1.15, z); g.add(pier); });
+    const deckUp = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.22, 1.3), pierM); deckUp.position.set(-5.05, -3.4 + 2.35, -9.5); g.add(deckUp);
+    const deckDown = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 1.3), pierM); deckDown.position.set(-1.4, -3.4 + 1.15, -9.5); deckDown.rotation.z = -0.62; g.add(deckDown);
+    // rusted car husks + reclaiming grass
+    const carGeo = new THREE.BoxGeometry(0.95, 0.34, 0.45);
+    this._scatterInst(g, carGeo, this._eraMat(0x4a3226, 0x1c0f08, 0.12), this.tier === 'low' ? 6 : 12, 5.5, 18, 91, -3.4 + 0.18, 0.8, 1.25);
+    this._scatterInst(g, new THREE.ConeGeometry(0.12, 0.34, 5), this._eraMat(0x2e5a2e, 0x142a14, 0.2), this.tier === 'low' ? 24 : 48, 4.5, 20, 101, -3.4 + 0.16, 0.7, 1.5);
+    // a second bird + two butterflies drifting low
+    const bird2 = new THREE.Group();
+    [-1, 1].forEach((s) => { const wing = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.03, 0.17), this._eraMat(0x101210)); wing.position.x = s * 0.28; wing.rotation.z = s * 0.5; bird2.add(wing); });
+    bird2.position.set(3, 6.2, -11); g.add(bird2);
+    movers.push({ mesh: bird2, kind: 'glide', x0: 3, y0: 6.2, sp: 0.9, span: 26, ph: 3.4 });
+    for (let i = 0; i < 2; i++) {
+      const bf = new THREE.Group();
+      [-1, 1].forEach((s) => { const w = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.12), this._eraMat(0x8a6a2c, 0x8a6a2c, 0.5)); w.material.side = THREE.DoubleSide; w.position.x = s * 0.05; w.rotation.z = s * 0.5; bf.add(w); });
+      bf.position.set(1.5 + i * 1.6, -2.2, -4.5 - i); g.add(bf);
+      movers.push({ mesh: bf, kind: 'glide', x0: 1.5 + i * 1.6, y0: -2.2 + i * 0.3, sp: 0.35 + i * 0.2, span: 7, ph: i * 2.4 });
+    }
+    // pale dawn sun breaking through
+    g.add(this._sunSprite(235, 220, 190, 13, [-10, 5, -30], 0.5));
+    // a lone returning bird
+    const bird = new THREE.Group();
+    [-1, 1].forEach((s) => { const wing = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.03, 0.2), this._eraMat(0x101210)); wing.position.x = s * 0.33; wing.rotation.z = s * 0.55; bird.add(wing); });
+    bird.position.set(-4, 5, -9); g.add(bird);
+    movers.push({ mesh: bird, kind: 'glide', x0: -4, y0: 5, sp: 1.1, span: 24, ph: 0 });
+    g.userData.movers = movers; return g;
+  }
+
+  buildTimeTravelUI() {
+    if (document.getElementById('time-dial') || !this.ERAS) return;
+    const wrap = document.createElement('div'); wrap.id = 'time-dial';
+    wrap.style.cssText = 'position:fixed;right:14px;top:50%;transform:translateY(-50%);z-index:69;display:flex;flex-direction:column;gap:7px;align-items:flex-end;';
+    ['dino', 'kingdom', 'space', 'apocalypse', 'post'].forEach((k) => {
+      const e = this.ERAS[k]; const b = document.createElement('button'); b.dataset.era = k; b.setAttribute('aria-label', e.name);
+      b.innerHTML = '<span style="font-size:15px;line-height:1;">' + e.emoji + '</span><span class="td-label">' + e.name + '</span>';
+      b.style.cssText = 'display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border-radius:999px;border:1px solid var(--line);background:rgba(12,12,18,0.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);color:#c9ccd8;font:600 12px Space Grotesk,sans-serif;letter-spacing:0.02em;cursor:pointer;white-space:nowrap;transition:border-color .3s,background .3s,color .3s;';
+      b.addEventListener('click', () => this.switchEra(k));
+      wrap.appendChild(b);
+    });
+    document.body.appendChild(wrap); this._timeDial = wrap; this.markEraUI();
+  }
+
+  markEraUI() {
+    if (!this._timeDial) return;
+    this._timeDial.querySelectorAll('button').forEach((b) => {
+      const on = b.dataset.era === this.era;
+      b.style.borderColor = on ? 'var(--accent)' : 'var(--line)';
+      b.style.background = on ? 'rgba(139,92,246,0.22)' : 'rgba(12,12,18,0.72)';
+      b.style.color = on ? '#fff' : '#c9ccd8';
     });
   }
 
@@ -1756,13 +2371,14 @@ class Portfolio {
     for (let i = 0; i < count; i++) {
       const tx = pts[i % pts.length][0] * W, ty = pts[i % pts.length][1] * H;
       const side = i % 2 ? 1 : -1;
-      const fx = tx + side * (W * 0.28), fy = -130 - i * 40; // just above the top edge so the descent is ON-screen
+      const fx = tx + side * (W * 0.28), fy = -90 - i * 30; // just above the top edge so the descent is ON-screen almost immediately
       const ang = Math.atan2(ty - fy, tx - fx) * 180 / Math.PI;
       const size = 70 + (i % 3) * 22; // bigger, clearly visible
       const el = document.createElement('div');
       el.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;will-change:transform;pointer-events:none;';
       el.innerHTML =
         '<div style="position:absolute;left:0;top:0;width:340px;height:' + Math.max(16, size * 0.55) + 'px;transform:translate(-100%,-50%);background:linear-gradient(to left, rgba(255,236,170,0.98), rgba(255,140,50,0.6) 38%, transparent);filter:blur(5px);border-radius:50%;"></div>'
+        + '<div style="position:absolute;left:0;top:0;width:' + Math.round(size * 2.3) + 'px;height:' + Math.round(size * 2.3) + 'px;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle, rgba(255,170,80,0.55), rgba(255,120,40,0.2) 45%, transparent 68%);mix-blend-mode:screen;"></div>'
         + '<div data-rock style="position:absolute;left:0;top:0;width:' + size + 'px;height:' + size + 'px;transform:translate(-50%,-50%);border-radius:46% 54% 52% 48%;background:radial-gradient(circle at 34% 30%, #8a7565, #45362c 55%, #1c150f);box-shadow:0 0 36px 11px rgba(255,120,40,0.7), inset -6px -6px 12px rgba(0,0,0,0.7);"></div>';
       layer.appendChild(el);
       const rock = el.querySelector('[data-rock]');
@@ -1794,6 +2410,7 @@ class Portfolio {
   handleApocalypse() {
     if (this.worldPhase !== 'idle') return;
     this.worldPhase = 'apocalypse'; this._savedScroll = window.scrollY || window.pageYOffset || 0;
+    this._eraBeforeApoc = this.era; // arc: bombardment resolves into Post-Apocalypse; REBUILD restores this era
     try { history.pushState({ universe: 'apoc' }, ''); this._pushedHistory = true; } catch (e) {}
     this.lockLawBar(true); this.toast('INCOMING — brace for impact');
     const g = this.gsap;
@@ -1874,6 +2491,8 @@ class Portfolio {
       g.set(btn, { display: 'inline-flex', opacity: 0, y: 12 });
       g.to(btn, { opacity: 1, y: 0, duration: 0.6, delay: 1.0, ease: 'power3.out', onComplete: () => { btn.style.animation = 'revivePulse 2.4s ease-in-out infinite'; try { btn.focus(); } catch (e) {} } });
     } else { if (title) title.style.opacity = '1'; if (btn) btn.style.display = 'inline-flex'; }
+    // the world has resolved into Post-Apocalypse (revealed as the overlay clears / under it)
+    try { if (this.ERAS && this.era !== 'post') this.applyEraInstant('post'); } catch (e) {}
   }
 
   rebuild() {
@@ -1899,6 +2518,7 @@ class Portfolio {
     const y = this._savedScroll || 0;
     if (this.lenis) { try { this.lenis.scrollTo(y, { immediate: true }); } catch (e) { window.scrollTo(0, y); } } else window.scrollTo(0, y);
     try { if (this._apocTl) this._apocTl.kill(); } catch (e) {} this._apocTl = null;
+    try { if (this.ERAS) this.applyEraInstant(this._eraBeforeApoc || 'space'); } catch (e) {} // REBUILD restores the prior era
     this.worldPhase = 'idle';
     this._reconcileHistory();
   }
@@ -1936,18 +2556,21 @@ class Portfolio {
       if (o.cards) o.grp.children.forEach((c, ci) => { c.position.y = (c.userData.by || 0) + Math.sin(t * 0.6 + ci) * 0.12; });
     }
     this.animateRoamers(t);
+    this.animateEra(t);
 
     const vh = window.innerHeight;
     const probe = (window.scrollY || window.pageYOffset || 0) + vh * 0.5;
-    const secs = this._sectionEls || [];
+    // section tops are CACHED (refreshed every ~2s + on resize) — the old per-frame
+    // getBoundingClientRect calls forced synchronous layout 60×/sec and caused
+    // visible scroll jank fighting Lenis
+    this._frameN = (this._frameN || 0) + 1;
+    if (!this._secTops || this._frameN % 120 === 0) this.updateSectionTops();
+    const tops = this._secTops || [];
     let i = 0;
-    for (let k = 0; k < secs.length; k++) {
-      const top = secs[k].getBoundingClientRect().top + window.scrollY;
-      if (probe >= top) i = k;
-    }
+    for (let k = 0; k < tops.length; k++) { if (probe >= tops[k]) i = k; }
     if (i > this.stations.length - 2) i = this.stations.length - 2;
-    const curTop = secs[i] ? secs[i].getBoundingClientRect().top + window.scrollY : 0;
-    const nxtTop = secs[i + 1] ? secs[i + 1].getBoundingClientRect().top + window.scrollY : curTop + vh;
+    const curTop = (tops[i] != null) ? tops[i] : 0;
+    const nxtTop = (tops[i + 1] != null) ? tops[i + 1] : curTop + vh;
     let f = (probe - curTop) / Math.max(1, nxtTop - curTop);
     f = Math.min(1, Math.max(0, f)); f = f * f * (3 - 2 * f);
     const a = this.stations[i], b = this.stations[i + 1];
@@ -2010,7 +2633,14 @@ class Portfolio {
     }
   }
 
+  // one batched layout read instead of per-frame getBoundingClientRect in loop()
+  updateSectionTops() {
+    const sy = window.scrollY || window.pageYOffset || 0;
+    this._secTops = (this._sectionEls || []).map((el) => el.getBoundingClientRect().top + sy);
+  }
+
   onResize() {
+    this.updateSectionTops();
     if (this.three) {
       const w = window.innerWidth, h = window.innerHeight;
       this.three.camera.aspect = w / h; this.three.camera.updateProjectionMatrix();
